@@ -1,0 +1,75 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  FilesetResolver,
+  PoseLandmarker,
+  type PoseLandmarkerResult,
+} from '@mediapipe/tasks-vision';
+
+/** Lazy-load the MediaPipe Pose model on session start. All pose processing is
+ *  client-side — frames never leave the device; only numeric results are used.
+ *  Falls back to the 'lite' model for usable fps on phones. */
+
+const WASM_BASE =
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
+const MODEL_LITE =
+  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+
+export type PoseStatus = 'idle' | 'loading' | 'ready' | 'error';
+
+export function usePoseLandmarker(active: boolean) {
+  const [status, setStatus] = useState<PoseStatus>('idle');
+  const [error, setError] = useState<string | null>(null);
+  const landmarkerRef = useRef<PoseLandmarker | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setStatus('loading');
+        const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+        if (cancelled) return;
+        const landmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_LITE, delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numPoses: 1,
+        });
+        if (cancelled) {
+          landmarker.close();
+          return;
+        }
+        landmarkerRef.current = landmarker;
+        setStatus('ready');
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setStatus('error');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      landmarkerRef.current?.close();
+      landmarkerRef.current = null;
+      setStatus('idle');
+    };
+  }, [active]);
+
+  /** Run detection on the current video frame. Returns null until ready.
+   *  Stable identity (reads through a ref) so consumers can safely list it
+   *  in effect deps without re-running their loop every render. */
+  const detect = useCallback(
+    (
+      video: HTMLVideoElement,
+      timestampMs: number
+    ): PoseLandmarkerResult | null => {
+      const lm = landmarkerRef.current;
+      if (!lm) return null;
+      return lm.detectForVideo(video, timestampMs);
+    },
+    []
+  );
+
+  return { status, error, detect };
+}

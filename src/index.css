@@ -1,0 +1,62 @@
+@import 'tailwindcss';
+
+/* ── DISCOMFORT brand tokens ─────────────────────────────────────────────
+   near-black bg, off-white text, one fault color (blood red), one earn color
+   (acid green). Monospaced numerals. Brutalist: hard edges, no gradients. */
+@theme {
+  --color-void: #0a0a0a;
+  --color-bone: #ededea;
+  --color-fault: #e5484d; /* blood red — faults / paused */
+  --color-earn: #9be564; /* acid green — valid / counting */
+
+  --font-mono:
+    'JetBrains Mono', 'SFMono-Regular', 'SF Mono', 'Menlo', 'Consolas',
+    ui-monospace, monospace;
+
+  --radius: 0px; /* brutalist — no rounded pills anywhere */
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: var(--color-void);
+    color: var(--color-bone);
+    font-family:
+      'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    /* prevent scroll/rubber-band during a session */
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+
+  /* Every counter/number uses tabular mono numerals so digits don't jitter. */
+  .numerals {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* full-width fault banner flash */
+@keyframes fault-flash {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.fault-flash {
+  animation: fault-flash 0.8s ease-out forwards;
+}
