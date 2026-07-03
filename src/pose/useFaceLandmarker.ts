@@ -1,25 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FilesetResolver,
-  PoseLandmarker,
+  FaceLandmarker,
   type NormalizedLandmark,
 } from '@mediapipe/tasks-vision';
 
-/** Lazy-load the MediaPipe Pose model on session start. All pose processing is
- *  client-side — frames never leave the device; only numeric results are used.
- *  Falls back to the 'lite' model for usable fps on phones. */
+/** Lazy-load the MediaPipe Face Landmarker (iris + eye landmarks) on demand.
+ *  Only loaded for tests that need it (STARE, later GAZE/VIGILANCE). All
+ *  processing client-side — frames never leave the device. */
 
 const WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
-const MODEL_LITE =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const MODEL =
+  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
 
-export type PoseStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type FaceStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-export function usePoseLandmarker(active: boolean) {
-  const [status, setStatus] = useState<PoseStatus>('idle');
+export function useFaceLandmarker(active: boolean) {
+  const [status, setStatus] = useState<FaceStatus>('idle');
   const [error, setError] = useState<string | null>(null);
-  const landmarkerRef = useRef<PoseLandmarker | null>(null);
+  const landmarkerRef = useRef<FaceLandmarker | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -30,10 +30,13 @@ export function usePoseLandmarker(active: boolean) {
         setStatus('loading');
         const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
         if (cancelled) return;
-        const landmarker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_LITE, delegate: 'GPU' },
+        const landmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL, delegate: 'GPU' },
           runningMode: 'VIDEO',
-          numPoses: 1,
+          numFaces: 1,
+          // landmarks are enough for EAR; blendshapes/matrix off to stay light
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
         });
         if (cancelled) {
           landmarker.close();
@@ -56,9 +59,7 @@ export function usePoseLandmarker(active: boolean) {
     };
   }, [active]);
 
-  /** Run detection and return the first pose's landmarks (or null). Stable
-   *  identity (reads through a ref) so consumers can list it in effect deps
-   *  without re-running their loop every render. */
+  /** Run detection and return the first face's landmarks (or null). */
   const detect = useCallback(
     (
       video: HTMLVideoElement,
@@ -66,7 +67,7 @@ export function usePoseLandmarker(active: boolean) {
     ): NormalizedLandmark[] | null => {
       const lm = landmarkerRef.current;
       if (!lm) return null;
-      return lm.detectForVideo(video, timestampMs).landmarks?.[0] ?? null;
+      return lm.detectForVideo(video, timestampMs).faceLandmarks?.[0] ?? null;
     },
     []
   );

@@ -11,6 +11,10 @@ export interface SessionResult {
   metric: 'count' | 'clock';
   value: number; // reps/jumps, or hold milliseconds
   avgForm: number;
+  /** attempt ended without a valid result (STARE: face lost) */
+  voided?: boolean;
+  /** optional headline for the result screen ("BLINK.") */
+  note?: string;
 }
 
 interface Props {
@@ -96,7 +100,7 @@ export function Session({ config, onExit }: Props) {
       if (ts <= lastTsRef.current) ts = lastTsRef.current + 1;
       lastTsRef.current = ts;
 
-      const result = detect(video, ts);
+      const lms = detect(video, ts);
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
@@ -130,7 +134,6 @@ export function Session({ config, onExit }: Props) {
         f.windowStart = ts;
       }
 
-      const lms = result?.landmarks?.[0];
       let state: TrackerState;
       if (lms && lms.length) {
         state = trackerRef.current.processFrame(lms, ts);

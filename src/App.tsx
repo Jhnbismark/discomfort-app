@@ -77,7 +77,7 @@ function Home({ onPick }: { onPick: (id: ExerciseId) => void }) {
         <TestButton label="STILLNESS" onClick={() => onPick('stillness')} />
         <TestButton label="GAZE" disabled />
         <TestButton label="VIGILANCE" disabled />
-        <TestButton label="STARE" disabled />
+        <TestButton label="STARE" onClick={() => onPick('stare')} />
       </Section>
 
       <div className="mt-auto" />
@@ -217,11 +217,39 @@ function ResultScreen({
   const isClock = result.metric === 'clock';
   const big = isClock ? formatClock(result.value) : String(result.value);
 
+  // voided attempt (STARE face lost): no verified result
+  if (result.voided) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6">
+        <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
+          {result.title}
+        </div>
+        <div className="numerals text-5xl font-bold tracking-widest text-fault">
+          VOID
+        </div>
+        <div className="numerals mt-3 text-sm tracking-[0.3em] text-bone/50">
+          FACE LOST — NOTHING VERIFIED
+        </div>
+        <button
+          onClick={onDone}
+          className="numerals mt-16 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
+        >
+          DONE
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col items-center justify-center px-6">
       <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
         {result.title}
       </div>
+      {result.note && (
+        <div className="numerals mb-3 text-3xl font-bold tracking-[0.3em] text-fault">
+          {result.note}
+        </div>
+      )}
       <div
         className="numerals whitespace-nowrap px-2 leading-none text-earn"
         style={{
@@ -235,11 +263,17 @@ function ResultScreen({
       </div>
 
       <div className="mt-12 flex w-full justify-center gap-12">
-        <Stat label="AVG FORM" value={String(result.avgForm)} />
-        <Stat
-          label={isClock ? 'HOLD' : 'REPS'}
-          value={isClock ? formatClock(result.value) : String(result.value)}
-        />
+        {result.exerciseId === 'stare' ? (
+          <Stat label="HELD" value={formatClock(result.value)} />
+        ) : (
+          <>
+            <Stat label="AVG FORM" value={String(result.avgForm)} />
+            <Stat
+              label={isClock ? 'HOLD' : 'REPS'}
+              value={isClock ? formatClock(result.value) : String(result.value)}
+            />
+          </>
+        )}
       </div>
 
       <button

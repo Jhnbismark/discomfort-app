@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { usePoseLandmarker } from '../pose/usePoseLandmarker';
+import { useFaceLandmarker } from '../pose/useFaceLandmarker';
 import type { TrackerState, ExerciseTracker } from '../trackers/types';
 import { audioSignals } from '../audio/AudioSignals';
 import type { ExerciseConfig } from '../exercises';
 import { formatClock, type SessionResult } from './Session';
 
-/** NEAR MODE — phone at arm's length, user calm. The screen must not stimulate:
- *  near-black, a dim mono clock only, no bright camera feed, no visible buttons
- *  during the test. STILLNESS allows eyes closed, so audio carries state (soft
- *  chime = paused, low tone = resumed). End = press-and-hold anywhere 2s. */
+/** NEAR MODE — phone at arm's length, user calm. Near-black, a dim mono clock
+ *  only, no bright camera feed, no visible buttons during the test. STILLNESS
+ *  allows eyes closed, so audio carries state (soft chime = paused, low tone =
+ *  resumed). STARE ends automatically on the first blink. End manually = press
+ *  and hold anywhere 2s. */
 
 const HOLD_TO_END_MS = 2000;
-const DIM_EARN = '#5f8a3d'; // dimmed acid-green, non-stimulating
-const DIM_FAULT = '#8a3436'; // dimmed blood-red
+const DIM_EARN = '#5f8a3d';
+const DIM_FAULT = '#8a3436';
 
 interface Props {
   config: ExerciseConfig;
@@ -24,11 +26,12 @@ export function NearSession({ config, onExit }: Props) {
   const trackerRef = useRef<ExerciseTracker>(config.makeTracker());
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef(0);
-  const lastGoodRef = useRef({ holdTimeMs: 0, formScore: 0 });
   const pausedRef = useRef(false);
+  const endedRef = useRef(false); // guard the auto-exit from firing twice
+  const onExitRef = useRef(onExit);
+  onExitRef.current = onExit;
   const fpsRef = useRef({ frames: 0, windowStart: 0, fps: 0 });
 
-  // press-and-hold-to-end
   const endTimerRef = useRef<number | null>(null);
   const [ending, setEnding] = useState(false);
 
@@ -37,11 +40,15 @@ export function NearSession({ config, onExit }: Props) {
   const [live, setLive] = useState<TrackerState>({
     holdTimeMs: 0,
     formScore: 0,
-    phase: 'holding',
+    phase: config.landmarker === 'face' ? 'calibrating' : 'holding',
     faults: [],
   });
 
-  const { status, error: poseError, detect } = usePoseLandmarker(true);
+  // load only the model this test needs
+  const usesFace = config.landmarker === 'face';
+  const pose = usePoseLandmarker(!usesFace);
+  const face = useFaceLandmarker(usesFace);
+  const { status, error, detect } = usesFace ? face : pose;
 
   // ── camera (feed stays hidden; only landmarks are used) ────────────────
   useEffect(() => {
@@ -90,7 +97,7 @@ export function NearSession({ config, onExit }: Props) {
       if (ts <= lastTsRef.current) ts = lastTsRef.current + 1;
       lastTsRef.current = ts;
 
-      const result = detect(video, ts);
+      const lms = detect(video, ts);
 
       const f = fpsRef.current;
       f.frames += 1;
@@ -100,24 +107,31 @@ export function NearSession({ config, onExit }: Props) {
         f.windowStart = ts;
       }
 
-      const lms = result?.landmarks?.[0];
-      let state: TrackerState;
-      if (lms && lms.length) {
-        state = trackerRef.current.processFrame(lms, ts);
-        lastGoodRef.current = {
-          holdTimeMs: state.holdTimeMs ?? 0,
-          formScore: state.formScore,
-        };
-      } else {
-        state = {
-          ...lastGoodRef.current,
-          phase: 'paused',
-          faults: ['MOVE INTO FRAME'],
-        };
+      // Every tracker handles an empty landmark array as "subject not visible"
+      // and preserves its accumulated result, so we always call through.
+      const state = trackerRef.current.processFrame(lms ?? [], ts);
+
+      // tracker declared the attempt over (STARE blink / face-lost void)
+      if (state.ended && !endedRef.current) {
+        endedRef.current = true;
+        cancelAnimationFrame(rafRef.current);
+        onExitRef.current({
+          exerciseId: config.id,
+          title: config.title,
+          metric: config.metric,
+          value: state.holdTimeMs ?? 0,
+          avgForm: state.formScore,
+          voided: state.voided,
+          note: state.voided ? undefined : 'BLINK.',
+        });
+        return;
       }
 
       // audio carries the state change (eyes may be closed)
-      const isPaused = state.phase === 'paused' || state.phase === 'invalid';
+      const isPaused =
+        state.faults.length > 0 ||
+        state.phase === 'paused' ||
+        state.phase === 'invalid';
       if (isPaused && !pausedRef.current) {
         audioSignals.pausedCue();
         pausedRef.current = true;
@@ -131,15 +145,17 @@ export function NearSession({ config, onExit }: Props) {
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [status, detect]);
+  }, [status, detect, config]);
 
   // ── press-and-hold anywhere for 2s to end ──────────────────────────────
   const beginHold = useCallback(() => {
-    void audioSignals.unlock(); // idempotent
-    if (endTimerRef.current !== null) return;
+    void audioSignals.unlock();
+    if (endTimerRef.current !== null || endedRef.current) return;
     setEnding(true);
     endTimerRef.current = window.setTimeout(() => {
-      onExit({
+      if (endedRef.current) return;
+      endedRef.current = true;
+      onExitRef.current({
         exerciseId: config.id,
         title: config.title,
         metric: config.metric,
@@ -147,7 +163,7 @@ export function NearSession({ config, onExit }: Props) {
         avgForm: live.formScore,
       });
     }, HOLD_TO_END_MS);
-  }, [onExit, config, live.holdTimeMs, live.formScore]);
+  }, [config, live.holdTimeMs, live.formScore]);
 
   const cancelHold = useCallback(() => {
     if (endTimerRef.current !== null) {
@@ -163,10 +179,12 @@ export function NearSession({ config, onExit }: Props) {
     };
   }, []);
 
-  const isPaused = live.phase === 'paused' || live.phase === 'invalid';
-  const stateWord = isPaused
-    ? (live.faults[0] ?? 'PAUSED')
-    : 'COUNTING';
+  const isPaused =
+    live.faults.length > 0 ||
+    live.phase === 'paused' ||
+    live.phase === 'invalid';
+  const stateWord = deriveStateWord(live);
+  const clock = formatClock(live.holdTimeMs ?? 0);
 
   return (
     <div
@@ -185,7 +203,7 @@ export function NearSession({ config, onExit }: Props) {
       )}
       {status === 'error' && (
         <p className="max-w-xs px-8 text-center text-sm text-fault/70">
-          POSE MODEL FAILED — {poseError}
+          MODEL FAILED — {error}
         </p>
       )}
       {camError && (
@@ -196,15 +214,14 @@ export function NearSession({ config, onExit }: Props) {
 
       {status === 'ready' && !camError && (
         <>
-          {/* dim clock — the whole interface */}
           <div
             className="numerals whitespace-nowrap leading-none transition-colors duration-500"
             style={{
-              fontSize: `min(18vh, ${Math.round((150 / Math.max(formatClock(live.holdTimeMs ?? 0).length, 1)) * 10) / 10}vw)`,
+              fontSize: `min(18vh, ${Math.round((150 / Math.max(clock.length, 1)) * 10) / 10}vw)`,
               color: isPaused ? DIM_FAULT : DIM_EARN,
             }}
           >
-            {formatClock(live.holdTimeMs ?? 0)}
+            {clock}
           </div>
           <div className="numerals mt-4 text-xs tracking-[0.4em] text-bone/30">
             {stateWord}
@@ -212,7 +229,6 @@ export function NearSession({ config, onExit }: Props) {
         </>
       )}
 
-      {/* faint hold-to-end hint + progress */}
       <div className="absolute inset-x-0 bottom-10 flex flex-col items-center gap-3">
         <div className="h-[2px] w-40 bg-bone/10">
           <div
@@ -230,7 +246,6 @@ export function NearSession({ config, onExit }: Props) {
         </p>
       </div>
 
-      {/* faint debug toggle — kept for threshold tuning (Phase 4) */}
       <button
         onClick={(e) => {
           e.stopPropagation();
@@ -256,4 +271,19 @@ export function NearSession({ config, onExit }: Props) {
       )}
     </div>
   );
+}
+
+/** phase/fault -> the dim status word under the clock. */
+function deriveStateWord(s: TrackerState): string {
+  if (s.faults.length > 0) return s.faults[0];
+  switch (s.phase) {
+    case 'calibrating':
+      return 'EYES OPEN — CALIBRATING';
+    case 'staring':
+      return "DON'T BLINK";
+    case 'holding':
+      return 'COUNTING';
+    default:
+      return s.phase.toUpperCase();
+  }
 }

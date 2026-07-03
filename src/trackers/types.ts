@@ -15,12 +15,17 @@ export interface TrackerState {
   holdTimeMs?: number; // plank
   formScore: number; // 0-100 running session average
   lastRepScore?: number;
-  phase: string; // 'up'|'down'|'airborne'|'holding'|'invalid'
+  phase: string; // 'up'|'down'|'airborne'|'holding'|'invalid'|'staring'|'ended'
   faults: string[]; // 'HIPS SAGGING', 'SHALLOW — NOT COUNTED', 'MOVE INTO FRAME'
   /** transient, one-frame events the UI/audio consume then discard */
   events?: TrackerEvent[];
   /** debug telemetry surfaced by the angle overlay toggle */
   debug?: Record<string, number>;
+  /** tracker declares the attempt is over (STARE ends on first blink). The
+   *  session reads this and exits to the result screen automatically. */
+  ended?: boolean;
+  /** the attempt ended without a valid result (STARE: face lost, not a blink) */
+  voided?: boolean;
 }
 
 export type TrackerEvent =
