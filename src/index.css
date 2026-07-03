@@ -48,6 +48,19 @@
   }
 }
 
+/* rep-count readout pops when the number changes — proof the count landed */
+@keyframes count-pop {
+  0% {
+    transform: scale(1.16);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.count-pop {
+  animation: count-pop 0.22s ease-out;
+}
+
 /* full-width fault banner flash */
 @keyframes fault-flash {
   0% {

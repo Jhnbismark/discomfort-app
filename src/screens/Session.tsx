@@ -207,8 +207,10 @@ export function Session({ config, onExit }: Props) {
 
   const isPaused = live.phase === 'paused' || live.phase === 'invalid';
   const fault = live.faults[0];
+  // clocks show tenths so a running clock is visibly alive (and a stuck one
+  // visibly stuck); counts pop on each rep for the same reason
   const readout = isClock
-    ? formatClock(live.holdTimeMs ?? 0)
+    ? formatClockTenths(live.holdTimeMs ?? 0)
     : String(live.count ?? 0);
 
   return (
@@ -250,7 +252,11 @@ export function Session({ config, onExit }: Props) {
           the M:SS clock never overflow a narrow phone. */}
       <div className="pointer-events-none absolute inset-x-0 top-[6vh] flex flex-col items-center overflow-hidden px-2">
         <div
-          className="numerals whitespace-nowrap leading-none"
+          key={isClock ? 'clock' : (live.count ?? 0)}
+          className={
+            'numerals whitespace-nowrap leading-none' +
+            (isClock ? '' : ' count-pop')
+          }
           style={{
             fontSize: readoutFontSize(readout.length, isClock),
             color: isPaused ? FAULT : EARN,
@@ -332,6 +338,12 @@ export function formatClock(ms: number): string {
   const m = Math.floor(totalS / 60);
   const s = totalS % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** "M:SS.d" — the ticking tenths make it obvious the clock is earning. */
+export function formatClockTenths(ms: number): string {
+  const tenth = Math.floor(ms / 100) % 10;
+  return `${formatClock(ms)}.${tenth}`;
 }
 
 function fmt(n: number | undefined): string {

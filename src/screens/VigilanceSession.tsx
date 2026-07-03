@@ -5,9 +5,12 @@ import { audioSignals } from '../audio/AudioSignals';
 import type { ExerciseConfig } from '../exercises';
 import type { SessionResult } from './Session';
 
-/** VIGILANCE — psychomotor vigilance task (PVT). A full-screen counter appears
- *  at random 2–10s intervals; tap the instant it shows. Camera verifies face +
- *  eyes open throughout; taps during unverified periods are voided. Lapse = RT >
+/** VIGILANCE — psychomotor vigilance task (PVT). Starts with a FRAMING stage:
+ *  visible camera feed, plain instructions, and open-eye calibration (the
+ *  eyes-verified check is judged against YOUR calibrated EAR, not a fixed
+ *  constant). Then: black screen; a counter appears at random 2–10s intervals;
+ *  tap the instant it shows. A small corner feed stays up so you always know
+ *  you're in frame. Taps during unverified periods are voided. Lapse = RT >
  *  500ms. False start = tap with no stimulus. Result = median RT (lower wins),
  *  secondary = lapse count. Fixed 3-minute duration. */
 
@@ -16,7 +19,9 @@ const MIN_ISI_MS = 2_000;
 const MAX_ISI_MS = 10_000;
 const NO_TAP_MS = 3_000; // stimulus with no response -> a lapse
 const LAPSE_RT = 500;
-const EYES_OPEN_EAR = 0.15;
+const EYES_OPEN_EAR = 0.15; // fallback floor if calibration fails
+const EYES_OPEN_RATIO = 0.6; // eyes closed when EAR < calibrated open × this
+const CALIB_SAMPLES = 30; // face frames needed before START unlocks
 
 interface Trial {
   rt: number;
@@ -33,6 +38,10 @@ export function VigilanceSession({ config, onExit }: Props) {
   const rafRef = useRef(0);
   const lastTsRef = useRef(0);
 
+  const stageRef = useRef<'framing' | 'live'>('framing');
+  const earSamplesRef = useRef<number[]>([]);
+  const earThreshRef = useRef(EYES_OPEN_EAR);
+
   const faceOkRef = useRef(false);
   const trialsRef = useRef<Trial[]>([]);
   const falseStartsRef = useRef(0);
@@ -46,6 +55,8 @@ export function VigilanceSession({ config, onExit }: Props) {
   onExitRef.current = onExit;
 
   const [camError, setCamError] = useState<string | null>(null);
+  const [stage, setStage] = useState<'framing' | 'live'>('framing');
+  const [calibrated, setCalibrated] = useState(false);
   const [display, setDisplay] = useState<'waiting' | 'stimulus'>('waiting');
   const [stimMs, setStimMs] = useState(0);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -151,9 +162,6 @@ export function VigilanceSession({ config, onExit }: Props) {
     const video = videoRef.current;
     if (!video) return;
 
-    startTsRef.current = performance.now();
-    scheduleNext();
-
     const loop = () => {
       rafRef.current = requestAnimationFrame(loop);
       if (video.readyState < 2 || video.videoWidth === 0) return;
@@ -163,7 +171,21 @@ export function VigilanceSession({ config, onExit }: Props) {
       lastTsRef.current = ts;
 
       const lms = detect(video, ts);
-      const ok = !!lms && facePresent(lms) && meanEAR(lms) > EYES_OPEN_EAR;
+      const facePres = !!lms && facePresent(lms);
+
+      if (stageRef.current === 'framing') {
+        // gather the user's open-eye EAR while they look at the instructions
+        if (facePres) {
+          const samples = earSamplesRef.current;
+          samples.push(meanEAR(lms));
+          if (samples.length > CALIB_SAMPLES * 2) samples.shift();
+          if (samples.length >= CALIB_SAMPLES) setCalibrated(true);
+        }
+        setVerified((prev) => (prev === facePres ? prev : facePres));
+        return;
+      }
+
+      const ok = facePres && meanEAR(lms) > earThreshRef.current;
       faceOkRef.current = ok;
       setVerified((prev) => (prev === ok ? prev : ok));
 
@@ -181,12 +203,26 @@ export function VigilanceSession({ config, onExit }: Props) {
       cancelAnimationFrame(rafRef.current);
       clearTimers();
     };
-  }, [status, detect, scheduleNext, finish, clearTimers]);
+  }, [status, detect, finish, clearTimers]);
+
+  // ── framing -> live ────────────────────────────────────────────────────
+  const startTest = useCallback(() => {
+    void audioSignals.unlock();
+    const samples = earSamplesRef.current;
+    if (samples.length >= 10) {
+      const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+      earThreshRef.current = Math.max(0.06, mean * EYES_OPEN_RATIO);
+    }
+    stageRef.current = 'live';
+    setStage('live');
+    startTsRef.current = performance.now();
+    scheduleNext();
+  }, [scheduleNext]);
 
   // ── tap handling ───────────────────────────────────────────────────────
   const onTap = useCallback(() => {
     void audioSignals.unlock();
-    if (endedRef.current) return;
+    if (endedRef.current || stageRef.current !== 'live') return;
 
     if (stimActiveRef.current) {
       const rt = Math.round(performance.now() - stimTsRef.current);
@@ -206,12 +242,27 @@ export function VigilanceSession({ config, onExit }: Props) {
     }
   }, [scheduleNext]);
 
+  const ready = status === 'ready' && !camError;
+  const framing = stage === 'framing';
+
+  // feed placement: big while framing; small corner thumbnail during the test
+  // so you always know your face is in frame
+  const videoClass = framing
+    ? 'absolute left-1/2 top-[6vh] h-[30vh] w-[56vw] max-w-[260px] -translate-x-1/2 border border-bone/25 object-cover opacity-80'
+    : 'absolute right-3 top-10 h-24 w-[4.5rem] border border-bone/20 object-cover opacity-50';
+
   return (
     <div
       className="relative flex h-full w-full select-none flex-col items-center justify-center overflow-hidden bg-void"
       onPointerDown={onTap}
     >
-      <video ref={videoRef} className="hidden" playsInline muted />
+      <video
+        ref={videoRef}
+        className={ready ? videoClass : 'hidden'}
+        style={{ transform: 'scaleX(-1)' }}
+        playsInline
+        muted
+      />
 
       {status === 'loading' && (
         <p className="numerals text-sm tracking-widest text-bone/40">
@@ -229,7 +280,48 @@ export function VigilanceSession({ config, onExit }: Props) {
         </p>
       )}
 
-      {status === 'ready' && !camError && display === 'stimulus' && (
+      {/* ── FRAMING: face in frame, how to play, calibrate, start ── */}
+      {ready && framing && (
+        <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-4 px-6 pb-8">
+          <div
+            className={
+              'numerals text-sm font-bold tracking-[0.4em] ' +
+              (verified ? 'text-earn' : 'text-fault')
+            }
+          >
+            {verified
+              ? calibrated
+                ? 'EYES CALIBRATED'
+                : 'FACE IN FRAME — CALIBRATING…'
+              : 'NO FACE DETECTED'}
+          </div>
+          <div className="space-y-2 self-stretch">
+            <Rule n="01" text="THE SCREEN GOES BLACK. WAIT." />
+            <Rule n="02" text="A NUMBER APPEARS AT RANDOM. TAP ANYWHERE — FAST." />
+            <Rule n="03" text="TAP WITH NO NUMBER ON SCREEN = FALSE START." />
+            <Rule n="04" text="OVER 500 MS = LAPSE. EYES MUST STAY OPEN, IN FRAME." />
+          </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              startTest();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            disabled={!calibrated}
+            className={
+              'numerals w-full border-2 py-5 text-xl font-bold tracking-[0.3em] transition-colors ' +
+              (calibrated
+                ? 'border-earn text-earn active:bg-earn active:text-void'
+                : 'border-bone/15 text-bone/25')
+            }
+          >
+            {calibrated ? 'START — 3 MINUTES' : 'SHOW YOUR FACE'}
+          </button>
+        </div>
+      )}
+
+      {/* ── LIVE ── */}
+      {ready && !framing && display === 'stimulus' && (
         <div
           className="numerals leading-none text-earn"
           style={{ fontSize: 'min(28vh, 40vw)' }}
@@ -238,10 +330,10 @@ export function VigilanceSession({ config, onExit }: Props) {
         </div>
       )}
 
-      {status === 'ready' && !camError && display === 'waiting' && (
+      {ready && !framing && display === 'waiting' && (
         <div className="flex flex-col items-center">
           <p className="numerals text-sm tracking-[0.5em] text-bone/25">WAIT</p>
-          {feedback && (
+          {feedback ? (
             <p
               className={
                 'numerals mt-6 text-2xl tracking-widest ' +
@@ -252,12 +344,16 @@ export function VigilanceSession({ config, onExit }: Props) {
             >
               {feedback}
             </p>
+          ) : (
+            <p className="numerals mt-6 text-[10px] tracking-[0.3em] text-bone/30">
+              TAP THE INSTANT THE NUMBER APPEARS
+            </p>
           )}
         </div>
       )}
 
       {/* top status strip */}
-      {status === 'ready' && !camError && (
+      {ready && !framing && (
         <div className="absolute inset-x-0 top-3 flex items-center justify-between px-4">
           <span className="numerals text-[11px] tracking-widest text-bone/30">
             {formatMMSS(remainingS)}
@@ -274,16 +370,27 @@ export function VigilanceSession({ config, onExit }: Props) {
       )}
 
       {/* faint early-end escape (kept for testing the 3-min task) */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          finish();
-        }}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="numerals absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-2 text-[10px] tracking-[0.3em] text-bone/20"
-      >
-        END EARLY
-      </button>
+      {!framing && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            finish();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="numerals absolute bottom-4 left-1/2 -translate-x-1/2 px-3 py-2 text-[10px] tracking-[0.3em] text-bone/20"
+        >
+          END EARLY
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Rule({ n, text }: { n: string; text: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="numerals text-xs text-earn">{n}</span>
+      <span className="numerals text-xs tracking-wide text-bone/70">{text}</span>
     </div>
   );
 }

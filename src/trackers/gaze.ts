@@ -12,7 +12,8 @@ import { meanEAR, gazeVector, facePresent } from '../pose/faceMath';
 
 const CALIBRATION_MS = 2000;
 const TOLERANCE = 0.16; // gaze deviation cone (normalized eye-box units)
-const EYES_OPEN_EAR = 0.15; // EAR above this = eyes open
+const EYES_OPEN_EAR = 0.15; // fallback eyes-open floor if calibration fails
+const EYES_OPEN_RATIO = 0.6; // eyes closed when EAR < calibrated open × this
 const GRACE_MS = 300;
 const DT_CAP_MS = 100;
 
@@ -24,6 +25,8 @@ export class GazeTracker implements ExerciseTracker {
   private lastValidTs = -Infinity;
   private calib: { x: number; y: number }[] = [];
   private neutral = { x: 0.5, y: 0.5 };
+  private earCalib: number[] = [];
+  private earOpenThresh = EYES_OPEN_EAR;
   private holdMs = 0;
   private devSum = 0;
   private devN = 0;
@@ -36,6 +39,8 @@ export class GazeTracker implements ExerciseTracker {
     this.lastValidTs = -Infinity;
     this.calib = [];
     this.neutral = { x: 0.5, y: 0.5 };
+    this.earCalib = [];
+    this.earOpenThresh = EYES_OPEN_EAR;
     this.holdMs = 0;
     this.devSum = 0;
     this.devN = 0;
@@ -59,16 +64,22 @@ export class GazeTracker implements ExerciseTracker {
 
     const ear = meanEAR(landmarks);
 
-    // calibration: average the neutral gaze while the user looks at the dot
+    // calibration: average the neutral gaze while the user looks at the dot,
+    // and their open-eye EAR so "eyes closed" is judged per-user, not by a
+    // fixed constant that misfires on narrower eyes / uneven light
     if (this.phase === 'calibrating') {
       if (this.firstFaceTs < 0) this.firstFaceTs = timestampMs;
       this.calib.push(gaze);
+      this.earCalib.push(ear);
       if (timestampMs - this.firstFaceTs >= CALIBRATION_MS) {
         const n = this.calib.length;
         this.neutral = {
           x: this.calib.reduce((a, b) => a + b.x, 0) / n,
           y: this.calib.reduce((a, b) => a + b.y, 0) / n,
         };
+        const earBase =
+          this.earCalib.reduce((a, b) => a + b, 0) / this.earCalib.length;
+        if (earBase > 0) this.earOpenThresh = earBase * EYES_OPEN_RATIO;
         this.phase = 'holding';
         this.lastValidTs = timestampMs;
       }
@@ -76,7 +87,7 @@ export class GazeTracker implements ExerciseTracker {
     }
 
     const dev = Math.hypot(gaze.x - this.neutral.x, gaze.y - this.neutral.y);
-    const eyesOpen = ear > EYES_OPEN_EAR;
+    const eyesOpen = ear > this.earOpenThresh;
     const onTarget = dev < TOLERANCE;
 
     if (eyesOpen && onTarget) {
@@ -128,6 +139,7 @@ export class GazeTracker implements ExerciseTracker {
         dev: Number.isNaN(dev) ? NaN : Math.round(dev * 1000),
         tol: Math.round(TOLERANCE * 1000),
         ear: Number.isNaN(ear) ? NaN : Math.round(ear * 1000),
+        earTh: Math.round(this.earOpenThresh * 1000),
         holdS: Math.round(this.holdMs / 100) / 10,
       },
     };

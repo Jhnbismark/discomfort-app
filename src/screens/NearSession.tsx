@@ -1,24 +1,42 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { usePoseLandmarker } from '../pose/usePoseLandmarker';
 import { useFaceLandmarker } from '../pose/useFaceLandmarker';
+import { facePresent } from '../pose/faceMath';
 import type { TrackerState, ExerciseTracker } from '../trackers/types';
 import { audioSignals } from '../audio/AudioSignals';
 import type { ExerciseConfig } from '../exercises';
-import { formatClock, type SessionResult } from './Session';
+import { formatClockTenths, type SessionResult } from './Session';
 
-/** NEAR MODE — phone at arm's length, user calm. Near-black, a dim mono clock
- *  only, no bright camera feed, no visible buttons during the test. STILLNESS
- *  allows eyes closed, so audio carries state (soft chime = paused, low tone =
- *  resumed). STARE ends automatically on the first blink. End manually = press
- *  and hold anywhere 2s. */
+/** NEAR MODE — phone at arm's length, user calm. Starts with a FRAMING stage:
+ *  the camera feed is visible with an IN FRAME indicator so you can position
+ *  yourself, then BEGIN drops to the dark test screen (dim mono clock, no
+ *  bright feed, no visible buttons). If tracking pauses mid-test, a small
+ *  thumbnail feed reappears so you can re-frame. STILLNESS allows eyes closed,
+ *  so audio carries state (soft chime = paused, low tone = resumed). STARE ends
+ *  automatically on the first blink. End manually = press and hold anywhere 2s. */
 
 const HOLD_TO_END_MS = 2000;
 const DIM_EARN = '#5f8a3d';
 const DIM_FAULT = '#8a3436';
+const MIN_POSE_POINTS = 6; // matches the stillness tracker's judgeable floor
 
 interface Props {
   config: ExerciseConfig;
   onExit: (result: SessionResult) => void;
+}
+
+/** Is the subject usably in frame? Face tests need the face mesh; pose tests
+ *  need enough visible landmarks to judge. */
+function subjectPresent(
+  lms: NormalizedLandmark[] | null,
+  usesFace: boolean
+): boolean {
+  if (!lms || lms.length === 0) return false;
+  if (usesFace) return facePresent(lms);
+  let n = 0;
+  for (const lm of lms) if ((lm.visibility ?? 0) >= 0.5) n += 1;
+  return n >= MIN_POSE_POINTS;
 }
 
 export function NearSession({ config, onExit }: Props) {
@@ -35,6 +53,10 @@ export function NearSession({ config, onExit }: Props) {
   const endTimerRef = useRef<number | null>(null);
   const [ending, setEnding] = useState(false);
 
+  const [stage, setStage] = useState<'framing' | 'live'>('framing');
+  const stageRef = useRef<'framing' | 'live'>('framing');
+  const [inFrame, setInFrame] = useState(false);
+
   const [camError, setCamError] = useState<string | null>(null);
   const [debug, setDebug] = useState(false);
   const [live, setLive] = useState<TrackerState>({
@@ -50,7 +72,7 @@ export function NearSession({ config, onExit }: Props) {
   const face = useFaceLandmarker(usesFace);
   const { status, error, detect } = usesFace ? face : pose;
 
-  // ── camera (feed stays hidden; only landmarks are used) ────────────────
+  // ── camera (feed shown while framing / paused; dark while earning) ─────
   useEffect(() => {
     let stream: MediaStream | null = null;
     let cancelled = false;
@@ -83,7 +105,7 @@ export function NearSession({ config, onExit }: Props) {
     };
   }, []);
 
-  // ── main loop (no canvas draw — screen must stay dark) ─────────────────
+  // ── main loop (no canvas draw — test screen must stay dark) ────────────
   useEffect(() => {
     if (status !== 'ready') return;
     const video = videoRef.current;
@@ -106,6 +128,13 @@ export function NearSession({ config, onExit }: Props) {
         f.frames = 0;
         f.windowStart = ts;
       }
+
+      const present = subjectPresent(lms, usesFace);
+      setInFrame((prev) => (prev === present ? prev : present));
+
+      // framing stage: only report presence — the tracker (and any
+      // calibration) must not start until the user is positioned and begins
+      if (stageRef.current === 'framing') return;
 
       // Every tracker handles an empty landmark array as "subject not visible"
       // and preserves its accumulated result, so we always call through.
@@ -145,11 +174,20 @@ export function NearSession({ config, onExit }: Props) {
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [status, detect, config]);
+  }, [status, detect, config, usesFace]);
 
-  // ── press-and-hold anywhere for 2s to end ──────────────────────────────
+  // ── framing -> live ────────────────────────────────────────────────────
+  const begin = useCallback(() => {
+    void audioSignals.unlock();
+    trackerRef.current.reset(); // calibration starts clean, right now
+    stageRef.current = 'live';
+    setStage('live');
+  }, []);
+
+  // ── press-and-hold anywhere for 2s to end (live stage only) ────────────
   const beginHold = useCallback(() => {
     void audioSignals.unlock();
+    if (stageRef.current !== 'live') return;
     if (endTimerRef.current !== null || endedRef.current) return;
     setEnding(true);
     endTimerRef.current = window.setTimeout(() => {
@@ -184,7 +222,17 @@ export function NearSession({ config, onExit }: Props) {
     live.phase === 'paused' ||
     live.phase === 'invalid';
   const stateWord = deriveStateWord(live);
-  const clock = formatClock(live.holdTimeMs ?? 0);
+  const clock = formatClockTenths(live.holdTimeMs ?? 0);
+  const framing = stage === 'framing';
+  const ready = status === 'ready' && !camError;
+
+  // feed placement: big while framing; small re-frame thumbnail when the test
+  // is paused (tracking lost / fault); hidden while earning
+  const videoClass = framing
+    ? 'absolute left-1/2 top-[8vh] h-[38vh] w-[68vw] max-w-xs -translate-x-1/2 border border-bone/25 object-cover opacity-80'
+    : isPaused
+      ? 'absolute bottom-28 right-3 h-32 w-24 border border-fault/50 object-cover opacity-60'
+      : 'hidden';
 
   return (
     <div
@@ -194,7 +242,13 @@ export function NearSession({ config, onExit }: Props) {
       onPointerLeave={cancelHold}
       onPointerCancel={cancelHold}
     >
-      <video ref={videoRef} className="hidden" playsInline muted />
+      <video
+        ref={videoRef}
+        className={videoClass}
+        style={{ transform: 'scaleX(-1)' }}
+        playsInline
+        muted
+      />
 
       {status === 'loading' && (
         <p className="numerals text-sm tracking-widest text-bone/40">
@@ -212,7 +266,45 @@ export function NearSession({ config, onExit }: Props) {
         </p>
       )}
 
-      {status === 'ready' && !camError && config.target && (
+      {/* ── FRAMING: see yourself, get in frame, then begin ── */}
+      {ready && framing && (
+        <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-5 px-6 pb-8">
+          <div
+            className="numerals text-sm font-bold tracking-[0.4em]"
+            style={{ color: inFrame ? DIM_EARN : DIM_FAULT }}
+          >
+            {inFrame
+              ? usesFace
+                ? 'FACE IN FRAME'
+                : 'IN FRAME'
+              : usesFace
+                ? 'NO FACE DETECTED'
+                : 'NOT IN FRAME'}
+          </div>
+          <p className="numerals text-center text-[10px] tracking-[0.3em] text-bone/40">
+            POSITION YOURSELF. THE SCREEN GOES DARK WHEN YOU BEGIN.
+          </p>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              begin();
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            disabled={!inFrame}
+            className={
+              'numerals w-full border-2 py-5 text-xl font-bold tracking-[0.3em] transition-colors ' +
+              (inFrame
+                ? 'border-earn text-earn active:bg-earn active:text-void'
+                : 'border-bone/15 text-bone/25')
+            }
+          >
+            {inFrame ? 'BEGIN' : 'GET IN FRAME'}
+          </button>
+        </div>
+      )}
+
+      {/* ── LIVE: dark test screen ── */}
+      {ready && !framing && config.target && (
         // GAZE: the target dot IS the interface. Tiny clock + state above it.
         <>
           <div className="absolute top-[18vh] flex flex-col items-center">
@@ -236,7 +328,7 @@ export function NearSession({ config, onExit }: Props) {
         </>
       )}
 
-      {status === 'ready' && !camError && !config.target && (
+      {ready && !framing && !config.target && (
         <>
           <div
             className="numerals whitespace-nowrap leading-none transition-colors duration-500"
@@ -253,22 +345,24 @@ export function NearSession({ config, onExit }: Props) {
         </>
       )}
 
-      <div className="absolute inset-x-0 bottom-10 flex flex-col items-center gap-3">
-        <div className="h-[2px] w-40 bg-bone/10">
-          <div
-            className="h-full bg-bone/40"
-            style={{
-              width: ending ? '100%' : '0%',
-              transition: ending
-                ? `width ${HOLD_TO_END_MS}ms linear`
-                : 'width 120ms ease-out',
-            }}
-          />
+      {ready && !framing && (
+        <div className="absolute inset-x-0 bottom-10 flex flex-col items-center gap-3">
+          <div className="h-[2px] w-40 bg-bone/10">
+            <div
+              className="h-full bg-bone/40"
+              style={{
+                width: ending ? '100%' : '0%',
+                transition: ending
+                  ? `width ${HOLD_TO_END_MS}ms linear`
+                  : 'width 120ms ease-out',
+              }}
+            />
+          </div>
+          <p className="numerals text-[10px] tracking-[0.3em] text-bone/25">
+            {ending ? 'KEEP HOLDING…' : 'PRESS AND HOLD TO END'}
+          </p>
         </div>
-        <p className="numerals text-[10px] tracking-[0.3em] text-bone/25">
-          {ending ? 'KEEP HOLDING…' : 'PRESS AND HOLD TO END'}
-        </p>
-      </div>
+      )}
 
       <button
         onClick={(e) => {
@@ -282,6 +376,7 @@ export function NearSession({ config, onExit }: Props) {
       </button>
       {debug && (
         <div className="numerals absolute left-2 top-2 space-y-1 text-[11px] text-bone/40">
+          <div>STAGE: {stage.toUpperCase()}</div>
           <div>PHASE: {live.phase.toUpperCase()}</div>
           {live.debug &&
             Object.entries(live.debug).map(([k, v]) => (
