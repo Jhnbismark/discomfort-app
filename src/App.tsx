@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Session, formatClock, type SessionResult } from './screens/Session';
+import { NearSession } from './screens/NearSession';
 import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
 
@@ -27,15 +28,25 @@ export function App() {
           onBack={() => setScreen('home')}
         />
       )}
-      {screen === 'session' && selected && (
-        <Session
-          config={selected}
-          onExit={(r) => {
-            setResult(r);
-            setScreen('result');
-          }}
-        />
-      )}
+      {screen === 'session' &&
+        selected &&
+        (selected.mode === 'near' ? (
+          <NearSession
+            config={selected}
+            onExit={(r) => {
+              setResult(r);
+              setScreen('result');
+            }}
+          />
+        ) : (
+          <Session
+            config={selected}
+            onExit={(r) => {
+              setResult(r);
+              setScreen('result');
+            }}
+          />
+        ))}
       {screen === 'result' && result && (
         <ResultScreen result={result} onDone={() => setScreen('home')} />
       )}
@@ -63,7 +74,7 @@ function Home({ onPick }: { onPick: (id: ExerciseId) => void }) {
       </Section>
 
       <Section label="MIND">
-        <TestButton label="STILLNESS" disabled />
+        <TestButton label="STILLNESS" onClick={() => onPick('stillness')} />
         <TestButton label="GAZE" disabled />
         <TestButton label="VIGILANCE" disabled />
         <TestButton label="STARE" disabled />

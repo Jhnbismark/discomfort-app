@@ -62,6 +62,41 @@ export class AudioSignals {
     osc.stop(t + 0.32);
   }
 
+  /** NEAR MODE cue — a soft chime when a still/hold clock pauses. The user may
+   *  have their eyes closed (stillness), so audio carries the state change. */
+  pausedCue(): void {
+    if (!this.ctx) return;
+    const t = this.now();
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, t);
+    osc.frequency.linearRampToValueAtTime(495, t + 0.18);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    osc.connect(gain).connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.4);
+  }
+
+  /** NEAR MODE cue — a low, calm tone when the clock resumes counting. */
+  resumedCue(): void {
+    if (!this.ctx) return;
+    const t = this.now();
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(196, t);
+    osc.frequency.linearRampToValueAtTime(262, t + 0.2);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    osc.connect(gain).connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.45);
+  }
+
   /** Begin a sustained tone (hold-clock paused). Idempotent. */
   startPausedTone(): void {
     if (!this.ctx || this.pausedOsc) return;
