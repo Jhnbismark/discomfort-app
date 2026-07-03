@@ -4,9 +4,10 @@ import { NearSession } from './screens/NearSession';
 import { VigilanceSession } from './screens/VigilanceSession';
 import { Identify } from './screens/Identify';
 import { Ranks } from './screens/Ranks';
+import { Wagers } from './screens/Wagers';
 import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
-import { supabase } from './lib/supabase';
+import { supabase, type WagerSubmitResult } from './lib/supabase';
 import { useAuth } from './lib/useAuth';
 
 type Screen =
@@ -15,7 +16,8 @@ type Screen =
   | 'session'
   | 'result'
   | 'identify'
-  | 'ranks';
+  | 'ranks'
+  | 'wagers';
 
 /** whether the latest result made it to the cloud ledger */
 export type SaveState = 'off' | 'saving' | 'saved' | 'error';
@@ -25,6 +27,9 @@ export function App() {
   const [selected, setSelected] = useState<ExerciseConfig | null>(null);
   const [result, setResult] = useState<SessionResult | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('off');
+  // when a session was started from a wager's FIGHT button, its id rides along
+  const [fightWagerId, setFightWagerId] = useState<string | null>(null);
+  const [wagerNote, setWagerNote] = useState<string | null>(null);
   const { session, profile, profileLoaded, setProfile } = useAuth();
 
   return (
@@ -36,6 +41,7 @@ export function App() {
             setScreen('presession');
           }}
           onRanks={() => setScreen('ranks')}
+          onWagers={() => setScreen('wagers')}
           onIdentify={() => setScreen('identify')}
           identityLabel={
             !profileLoaded
@@ -64,6 +70,19 @@ export function App() {
           onIdentify={() => setScreen('identify')}
         />
       )}
+      {screen === 'wagers' && (
+        <Wagers
+          userId={session?.user.id ?? ''}
+          hasProfile={!!session && !!profile}
+          onBack={() => setScreen('home')}
+          onIdentify={() => setScreen('identify')}
+          onFight={(exerciseId, wagerId) => {
+            setSelected(EXERCISES[exerciseId]);
+            setFightWagerId(wagerId);
+            setScreen('presession');
+          }}
+        />
+      )}
       {screen === 'presession' && selected && (
         <PreSession
           config={selected}
@@ -77,12 +96,27 @@ export function App() {
           const onExit = (r: SessionResult) => {
             setResult(r);
             setScreen('result');
-            if (session) {
-              setSaveState('saving');
-              void supabase
+            const wagerId = fightWagerId;
+            setFightWagerId(null); // one attempt per FIGHT tap, win or void
+            if (!session) {
+              setSaveState('off');
+              setWagerNote(null);
+              return;
+            }
+            const uid = session.user.id;
+            setSaveState('saving');
+            setWagerNote(
+              wagerId
+                ? r.voided
+                  ? 'WAGER: VOID ATTEMPTS DON’T COUNT — GO AGAIN'
+                  : 'WAGER: SUBMITTING ENTRY…'
+                : null
+            );
+            void (async () => {
+              const { data, error } = await supabase
                 .from('sessions')
                 .insert({
-                  user_id: session.user.id,
+                  user_id: uid,
                   exercise_id: r.exerciseId,
                   metric: r.metric,
                   value: r.value,
@@ -91,10 +125,37 @@ export function App() {
                   false_starts: r.falseStarts ?? null,
                   voided: r.voided ?? false,
                 })
-                .then(({ error }) => setSaveState(error ? 'error' : 'saved'));
-            } else {
-              setSaveState('off');
-            }
+                .select('id')
+                .single();
+              setSaveState(error ? 'error' : 'saved');
+              if (!wagerId || r.voided) return;
+              if (error || !data) {
+                setWagerNote('WAGER: ENTRY NOT SUBMITTED — SAVE FAILED');
+                return;
+              }
+              const { data: wr, error: werr } = await supabase.rpc(
+                'submit_wager_entry',
+                { p_wager_id: wagerId, p_session_id: data.id }
+              );
+              if (werr) {
+                setWagerNote('WAGER: ' + werr.message.toUpperCase());
+                return;
+              }
+              const res = wr as WagerSubmitResult;
+              if (res.status !== 'resolved') {
+                setWagerNote('WAGER: ENTRY IN — WAITING ON OPPONENT');
+                return;
+              }
+              const myDelta =
+                (res.elo_delta ?? 0) * (res.challenger === uid ? 1 : -1);
+              setWagerNote(
+                res.winner === null
+                  ? 'WAGER: DRAW'
+                  : res.winner === uid
+                    ? `WAGER WON — RATING +${myDelta}`
+                    : `WAGER LOST — RATING ${myDelta}`
+              );
+            })();
           };
           if (selected.interaction === 'pvt')
             return <VigilanceSession config={selected} onExit={onExit} />;
@@ -106,6 +167,7 @@ export function App() {
         <ResultScreen
           result={result}
           saveState={saveState}
+          wagerNote={wagerNote}
           onDone={() => setScreen('home')}
         />
       )}
@@ -117,12 +179,14 @@ export function App() {
 function Home({
   onPick,
   onRanks,
+  onWagers,
   onIdentify,
   identityLabel,
   identityUrgent,
 }: {
   onPick: (id: ExerciseId) => void;
   onRanks: () => void;
+  onWagers: () => void;
   onIdentify: () => void;
   identityLabel: string;
   identityUrgent: boolean;
@@ -166,6 +230,7 @@ function Home({
 
       <Section label="LEDGER">
         <TestButton label="RANKS" onClick={onRanks} />
+        <TestButton label="WAGERS" onClick={onWagers} />
       </Section>
 
       <div className="mt-auto" />
@@ -295,7 +360,13 @@ function PreSession({
 }
 
 // ── RESULT ─────────────────────────────────────────────────────────────
-function SaveLine({ saveState }: { saveState: SaveState }) {
+function SaveLine({
+  saveState,
+  wagerNote,
+}: {
+  saveState: SaveState;
+  wagerNote: string | null;
+}) {
   const text =
     saveState === 'saved'
       ? 'SAVED TO THE LEDGER'
@@ -305,28 +376,46 @@ function SaveLine({ saveState }: { saveState: SaveState }) {
           ? 'SAVE FAILED — RESULT KEPT LOCALLY ONLY'
           : 'NOT IDENTIFIED — NOT SAVED';
   return (
-    <p
-      className={
-        'numerals mt-8 text-center text-[10px] tracking-[0.3em] ' +
-        (saveState === 'saved'
-          ? 'text-earn/70'
-          : saveState === 'error'
-            ? 'text-fault'
-            : 'text-bone/30')
-      }
-    >
-      {text}
-    </p>
+    <div className="mt-8 space-y-2">
+      <p
+        className={
+          'numerals text-center text-[10px] tracking-[0.3em] ' +
+          (saveState === 'saved'
+            ? 'text-earn/70'
+            : saveState === 'error'
+              ? 'text-fault'
+              : 'text-bone/30')
+        }
+      >
+        {text}
+      </p>
+      {wagerNote && (
+        <p
+          className={
+            'numerals text-center text-[11px] font-bold tracking-[0.3em] ' +
+            (wagerNote.includes('WON')
+              ? 'text-earn'
+              : wagerNote.includes('LOST') || wagerNote.includes('VOID')
+                ? 'text-fault'
+                : 'text-bone/60')
+          }
+        >
+          {wagerNote}
+        </p>
+      )}
+    </div>
   );
 }
 
 function ResultScreen({
   result,
   saveState,
+  wagerNote,
   onDone,
 }: {
   result: SessionResult;
   saveState: SaveState;
+  wagerNote: string | null;
   onDone: () => void;
 }) {
   const isClock = result.metric === 'clock';
@@ -346,7 +435,7 @@ function ResultScreen({
         <div className="numerals mt-3 max-w-xs text-center text-sm tracking-[0.3em] text-bone/50">
           {isRt ? 'NO VERIFIED TAPS — EYES NOT SEEN' : 'FACE LOST — NOTHING VERIFIED'}
         </div>
-        <SaveLine saveState={saveState} />
+        <SaveLine saveState={saveState} wagerNote={wagerNote} />
         <button
           onClick={onDone}
           className="numerals mt-6 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
@@ -380,7 +469,7 @@ function ResultScreen({
           <Stat label="FALSE STARTS" value={String(result.falseStarts ?? 0)} />
           <Stat label="SCORE" value={String(result.avgForm)} />
         </div>
-        <SaveLine saveState={saveState} />
+        <SaveLine saveState={saveState} wagerNote={wagerNote} />
         <button
           onClick={onDone}
           className="numerals mt-6 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"

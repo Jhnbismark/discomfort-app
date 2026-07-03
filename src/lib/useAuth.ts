@@ -31,7 +31,7 @@ export function useAuth() {
     setProfileLoaded(false);
     void supabase
       .from('profiles')
-      .select('id, handle')
+      .select('id, handle, elo')
       .eq('id', userId)
       .maybeSingle()
       .then(({ data }) => {

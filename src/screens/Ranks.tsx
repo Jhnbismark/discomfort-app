@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase, type RankRow } from '../lib/supabase';
+import { supabase, type Profile, type RankRow } from '../lib/supabase';
 import { EXERCISES, type ExerciseId } from '../exercises';
 import { formatClock } from './Session';
 
@@ -23,10 +23,13 @@ interface Props {
   onIdentify: () => void;
 }
 
+type Tab = ExerciseId | 'rating';
+
 export function Ranks({ userId, onBack, onIdentify }: Props) {
   const [rows, setRows] = useState<RankRow[] | null>(null);
+  const [ratings, setRatings] = useState<Profile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<ExerciseId>('pushup');
+  const [tab, setTab] = useState<Tab>('rating');
 
   useEffect(() => {
     if (!userId) return;
@@ -39,13 +42,21 @@ export function Ranks({ userId, onBack, onIdentify }: Props) {
         if (err) setError(err.message.toUpperCase());
         else setRows((data as RankRow[]) ?? []);
       });
+    void supabase
+      .from('profiles')
+      .select('id, handle, elo')
+      .order('elo', { ascending: false })
+      .limit(100)
+      .then(({ data }) => {
+        if (!cancelled) setRatings((data as Profile[]) ?? []);
+      });
     return () => {
       cancelled = true;
     };
   }, [userId]);
 
   const board = useMemo(() => {
-    if (!rows) return [];
+    if (tab === 'rating' || !rows) return [];
     const config = EXERCISES[tab];
     const filtered = rows.filter((r) => r.exercise_id === tab);
     filtered.sort((a, b) =>
@@ -84,7 +95,7 @@ export function Ranks({ userId, onBack, onIdentify }: Props) {
         <>
           {/* test tabs */}
           <div className="mt-6 flex flex-wrap gap-2">
-            {ORDER.map((id) => (
+            {(['rating', ...ORDER] as Tab[]).map((id) => (
               <button
                 key={id}
                 onClick={() => setTab(id)}
@@ -95,7 +106,7 @@ export function Ranks({ userId, onBack, onIdentify }: Props) {
                     : 'border-bone/30 text-bone/60')
                 }
               >
-                {EXERCISES[id].title}
+                {id === 'rating' ? 'RATING' : EXERCISES[id].title}
               </button>
             ))}
           </div>
@@ -106,12 +117,32 @@ export function Ranks({ userId, onBack, onIdentify }: Props) {
                 {error}
               </p>
             )}
-            {!error && rows === null && (
+            {tab === 'rating' &&
+              (ratings ?? []).map((p, i) => (
+                <div
+                  key={p.id}
+                  className={
+                    'flex items-center justify-between border-b border-bone/10 py-3 ' +
+                    (p.id === userId ? 'text-earn' : 'text-bone')
+                  }
+                >
+                  <div className="flex items-center gap-4">
+                    <span className="numerals w-8 text-sm text-bone/40">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span className="numerals text-lg font-bold tracking-[0.15em]">
+                      {p.handle}
+                    </span>
+                  </div>
+                  <div className="numerals text-lg">{p.elo}</div>
+                </div>
+              ))}
+            {tab !== 'rating' && !error && rows === null && (
               <p className="numerals text-xs tracking-widest text-bone/40">
                 LOADING…
               </p>
             )}
-            {!error && rows !== null && board.length === 0 && (
+            {tab !== 'rating' && !error && rows !== null && board.length === 0 && (
               <p className="numerals text-xs tracking-widest text-bone/40">
                 NO VERIFIED RESULTS YET. BE FIRST.
               </p>
@@ -133,7 +164,9 @@ export function Ranks({ userId, onBack, onIdentify }: Props) {
                   </span>
                 </div>
                 <div className="text-right">
-                  <div className="numerals text-lg">{formatBest(tab, r.best)}</div>
+                  <div className="numerals text-lg">
+                    {formatBest(tab as ExerciseId, r.best)}
+                  </div>
                   <div className="numerals text-[9px] tracking-widest text-bone/30">
                     {r.attempts} ATTEMPT{r.attempts === 1 ? '' : 'S'}
                   </div>

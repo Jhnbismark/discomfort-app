@@ -34,7 +34,11 @@ export function Identify({ session, profile, onProfileClaimed, onBack }: Props) 
         <HandleStep userId={session.user.id} onClaimed={onProfileClaimed} />
       )}
       {session && profile && (
-        <AccountStep email={session.user.email ?? ''} handle={profile.handle} />
+        <AccountStep
+          email={session.user.email ?? ''}
+          handle={profile.handle}
+          elo={profile.elo}
+        />
       )}
 
       <div className="mt-auto" />
@@ -140,7 +144,7 @@ function HandleStep({
       );
       setState('error');
     } else {
-      onClaimed({ id: userId, handle });
+      onClaimed({ id: userId, handle, elo: 1000 });
     }
   };
 
@@ -181,16 +185,34 @@ function HandleStep({
   );
 }
 
-function AccountStep({ email, handle }: { email: string; handle: string }) {
+function AccountStep({
+  email,
+  handle,
+  elo,
+}: {
+  email: string;
+  handle: string;
+  elo: number;
+}) {
   const [signingOut, setSigningOut] = useState(false);
   return (
     <div className="mt-10 space-y-6">
-      <div>
-        <div className="numerals text-[10px] tracking-[0.3em] text-bone/40">
-          HANDLE
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="numerals text-[10px] tracking-[0.3em] text-bone/40">
+            HANDLE
+          </div>
+          <div className="numerals mt-1 text-3xl font-bold tracking-[0.2em] text-earn">
+            {handle}
+          </div>
         </div>
-        <div className="numerals mt-1 text-3xl font-bold tracking-[0.2em] text-earn">
-          {handle}
+        <div className="text-right">
+          <div className="numerals text-[10px] tracking-[0.3em] text-bone/40">
+            RATING
+          </div>
+          <div className="numerals mt-1 text-3xl font-bold text-bone">
+            {elo}
+          </div>
         </div>
       </div>
       <div>
