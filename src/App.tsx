@@ -212,8 +212,10 @@ function ResultScreen({
         {result.title}
       </div>
       <div
-        className="numerals leading-none text-earn"
-        style={{ fontSize: isClock ? '22vh' : '32vh' }}
+        className="numerals whitespace-nowrap px-2 leading-none text-earn"
+        style={{
+          fontSize: `min(${isClock ? 22 : 32}vh, ${Math.round((150 / Math.max(big.length, 1)) * 10) / 10}vw)`,
+        }}
       >
         {big}
       </div>

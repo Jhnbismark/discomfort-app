@@ -239,12 +239,14 @@ export function Session({ config, onExit }: Props) {
         </Overlay>
       )}
 
-      {/* GIANT READOUT — fills ~half the screen, readable at 3m */}
-      <div className="pointer-events-none absolute inset-x-0 top-[6vh] flex flex-col items-center">
+      {/* GIANT READOUT — fills ~half the screen, readable at 3m. Font is sized
+          off both viewport height AND string width so multi-digit counts and
+          the M:SS clock never overflow a narrow phone. */}
+      <div className="pointer-events-none absolute inset-x-0 top-[6vh] flex flex-col items-center overflow-hidden px-2">
         <div
-          className="numerals leading-none"
+          className="numerals whitespace-nowrap leading-none"
           style={{
-            fontSize: isClock ? '26vh' : '42vh',
+            fontSize: readoutFontSize(readout.length, isClock),
             color: isPaused ? FAULT : EARN,
             textShadow: '0 0 40px rgba(0,0,0,0.7)',
           }}
@@ -306,6 +308,16 @@ export function Session({ config, onExit }: Props) {
       </p>
     </div>
   );
+}
+
+/** Font size for the giant readout. Capped by viewport height for the tall
+ *  case, and by width-per-character so a long string (100+, or the M:SS clock)
+ *  can't run off the sides. ~0.6em per mono glyph, ~88vw usable width, so the
+ *  width cap is 88 / (len * 0.6) ≈ 146/len vw. Clock uses a lower height cap. */
+function readoutFontSize(len: number, isClock: boolean): string {
+  const heightCap = isClock ? 24 : 40; // vh
+  const widthCap = Math.round((146 / Math.max(len, 1)) * 10) / 10; // vw
+  return `min(${heightCap}vh, ${widthCap}vw)`;
 }
 
 /** milliseconds -> "M:SS" (always shows a minute field so it reads as a clock). */
