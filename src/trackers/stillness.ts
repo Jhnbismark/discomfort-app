@@ -3,16 +3,19 @@ import type { ExerciseTracker, TrackerState } from './types';
 import { vis, mapClamp } from './geometry';
 
 /** STILLNESS — front-on, seated or standing, upper body in frame. Pose only.
- *  Signal: mean per-frame displacement of visible landmarks (normalized coords),
- *  EMA smoothed. Valid = displacement below the micro-movement threshold
- *  (breathing must pass, fidgeting must not — tune with the debug overlay).
- *  Clock runs only while valid; 300ms grace for tracking jitter. Movement ->
- *  red pause, fault "MOVEMENT — CLOCK PAUSED." Quality: inverse of mean movement
- *  magnitude during valid time. */
+ *  Signal: mean per-frame displacement of visible landmarks (normalized
+ *  coords) AFTER subtracting the common-mode translation — the whole frame
+ *  shifting together is camera shake (hand-held phone) or breathing, not
+ *  fidgeting, so only relative movement between points counts. EMA smoothed.
+ *  Valid = residual below the micro-movement threshold (breathing must pass,
+ *  fidgeting must not — tune with the debug overlay). Clock runs only while
+ *  valid; 600ms grace for tracking jitter. Movement -> red pause, fault
+ *  "MOVEMENT — CLOCK PAUSED." Quality: inverse of mean movement during valid
+ *  time. */
 
-const STILL_THRESHOLD = 0.006; // mean normalized displacement/frame; tune live
+const STILL_THRESHOLD = 0.008; // mean residual displacement/frame; tune live
 const EMA_ALPHA = 0.3;
-const GRACE_MS = 300;
+const GRACE_MS = 600;
 const DT_CAP_MS = 100;
 const VIS_FLOOR = 0.5;
 const MIN_POINTS = 6; // need at least this many tracked points to judge
@@ -83,21 +86,30 @@ export class StillnessTracker implements ExerciseTracker {
     return this.state(phase, faults, smooth);
   }
 
-  /** Mean euclidean displacement of points visible in BOTH frames. Null on the
-   *  first frame or when too few points are trackable. */
+  /** Mean residual displacement of points visible in BOTH frames, after
+   *  removing the mean translation (camera shake / whole-body drift moves
+   *  every point identically and cancels out; a fidgeting hand does not).
+   *  Null on the first frame or when too few points are trackable. */
   private displacement(cur: NormalizedLandmark[]): number | null {
     if (!this.prev) return null;
-    let sum = 0;
-    let n = 0;
+    const dx: number[] = [];
+    const dy: number[] = [];
     for (let i = 0; i < cur.length; i++) {
       const a = this.prev[i];
       const b = cur[i];
       if (!a || !b) continue;
       if (vis(a) < VIS_FLOOR || vis(b) < VIS_FLOOR) continue;
-      sum += Math.hypot(b.x - a.x, b.y - a.y);
-      n += 1;
+      dx.push(b.x - a.x);
+      dy.push(b.y - a.y);
     }
+    const n = dx.length;
     if (n < MIN_POINTS) return null;
+    const mx = dx.reduce((a, b) => a + b, 0) / n;
+    const my = dy.reduce((a, b) => a + b, 0) / n;
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      sum += Math.hypot(dx[i] - mx, dy[i] - my);
+    }
     return sum / n;
   }
 
