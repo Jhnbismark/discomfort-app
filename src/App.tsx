@@ -1,26 +1,35 @@
 import { useEffect, useState } from 'react';
-import { PushupSession } from './screens/PushupSession';
+import { Session, formatClock, type SessionResult } from './screens/Session';
+import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
 
 type Screen = 'home' | 'presession' | 'session' | 'result';
 
-interface Result {
-  count: number;
-  avgForm: number;
-}
-
 export function App() {
   const [screen, setScreen] = useState<Screen>('home');
-  const [result, setResult] = useState<Result | null>(null);
+  const [selected, setSelected] = useState<ExerciseConfig | null>(null);
+  const [result, setResult] = useState<SessionResult | null>(null);
 
   return (
     <div className="mx-auto h-full max-w-md">
-      {screen === 'home' && <Home onStart={() => setScreen('presession')} />}
-      {screen === 'presession' && (
-        <PreSession onGo={() => setScreen('session')} onBack={() => setScreen('home')} />
+      {screen === 'home' && (
+        <Home
+          onPick={(id) => {
+            setSelected(EXERCISES[id]);
+            setScreen('presession');
+          }}
+        />
       )}
-      {screen === 'session' && (
-        <PushupSession
+      {screen === 'presession' && selected && (
+        <PreSession
+          config={selected}
+          onGo={() => setScreen('session')}
+          onBack={() => setScreen('home')}
+        />
+      )}
+      {screen === 'session' && selected && (
+        <Session
+          config={selected}
           onExit={(r) => {
             setResult(r);
             setScreen('result');
@@ -35,7 +44,7 @@ export function App() {
 }
 
 // ── HOME ───────────────────────────────────────────────────────────────
-function Home({ onStart }: { onStart: () => void }) {
+function Home({ onPick }: { onPick: (id: ExerciseId) => void }) {
   return (
     <div className="flex h-full flex-col px-5 py-8">
       <header className="mb-10">
@@ -48,9 +57,9 @@ function Home({ onStart }: { onStart: () => void }) {
       </header>
 
       <Section label="BODY">
-        <TestButton label="PUSH-UPS" onClick={onStart} />
-        <TestButton label="SKIPPING" disabled />
-        <TestButton label="PLANK" disabled />
+        <TestButton label="PUSH-UPS" onClick={() => onPick('pushup')} />
+        <TestButton label="SKIPPING" onClick={() => onPick('skipping')} />
+        <TestButton label="PLANK" onClick={() => onPick('plank')} />
       </Section>
 
       <Section label="MIND">
@@ -108,13 +117,20 @@ function TestButton({
 }
 
 // ── PRE-SESSION ────────────────────────────────────────────────────────
-function PreSession({ onGo, onBack }: { onGo: () => void; onBack: () => void }) {
+function PreSession({
+  config,
+  onGo,
+  onBack,
+}: {
+  config: ExerciseConfig;
+  onGo: () => void;
+  onBack: () => void;
+}) {
   const [count, setCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (count === null) return;
     if (count <= 0) {
-      // let "GO" register before the session takes over
       const t = setTimeout(onGo, 400);
       return () => clearTimeout(t);
     }
@@ -144,28 +160,30 @@ function PreSession({ onGo, onBack }: { onGo: () => void; onBack: () => void }) 
         ← BACK
       </button>
       <h1 className="numerals text-3xl font-bold tracking-widest text-bone">
-        PUSH-UPS
+        {config.title}
       </h1>
 
       <div className="mt-10 space-y-6 text-bone/80">
-        <PlacementRow n="01" text="CAMERA SIDE-ON TO YOUR BODY." />
-        <PlacementRow n="02" text="PHONE 2–3 METRES AWAY, ON THE FLOOR." />
-        <PlacementRow n="03" text="FULL BODY IN FRAME: HANDS TO FEET." />
-        <PlacementRow n="04" text="AUDIO IS PRIMARY. TURN UP THE VOLUME." />
+        {config.placement.map((step) => (
+          <div key={step.n} className="flex items-start gap-4">
+            <span className="numerals text-sm text-earn">{step.n}</span>
+            <span className="numerals text-sm tracking-wide">{step.text}</span>
+          </div>
+        ))}
       </div>
 
-      <div className="mt-8 border border-fault/40 p-4">
-        <p className="text-sm leading-snug text-fault">
-          HARD RULE: A REP THAT DOESN'T BREAK 100° AT THE ELBOW IS NOT COUNTED.
-          NO PARTIAL CREDIT.
-        </p>
-      </div>
+      {config.hardRule && (
+        <div className="mt-8 border border-fault/40 p-4">
+          <p className="text-sm leading-snug text-fault">
+            HARD RULE: {config.hardRule}
+          </p>
+        </div>
+      )}
 
       <div className="mt-auto" />
       <button
         onClick={() => {
-          // this tap is the user's last gesture before walking away —
-          // unlock the AudioContext here so FAR MODE ticks are audible
+          // last gesture before walking away — unlock the AudioContext here
           void audioSignals.unlock();
           setCount(3);
         }}
@@ -177,38 +195,38 @@ function PreSession({ onGo, onBack }: { onGo: () => void; onBack: () => void }) 
   );
 }
 
-function PlacementRow({ n, text }: { n: string; text: string }) {
-  return (
-    <div className="flex items-start gap-4">
-      <span className="numerals text-sm text-earn">{n}</span>
-      <span className="numerals text-sm tracking-wide">{text}</span>
-    </div>
-  );
-}
-
 // ── RESULT ─────────────────────────────────────────────────────────────
 function ResultScreen({
   result,
   onDone,
 }: {
-  result: Result;
+  result: SessionResult;
   onDone: () => void;
 }) {
+  const isClock = result.metric === 'clock';
+  const big = isClock ? formatClock(result.value) : String(result.value);
+
   return (
     <div className="flex h-full flex-col items-center justify-center px-6">
+      <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
+        {result.title}
+      </div>
       <div
         className="numerals leading-none text-earn"
-        style={{ fontSize: '32vh' }}
+        style={{ fontSize: isClock ? '22vh' : '32vh' }}
       >
-        {result.count}
+        {big}
       </div>
       <div className="numerals mt-2 text-xl tracking-[0.4em] text-bone/70">
-        VERIFIED
+        {isClock ? 'VERIFIED HOLD' : 'VERIFIED'}
       </div>
 
       <div className="mt-12 flex w-full justify-center gap-12">
         <Stat label="AVG FORM" value={String(result.avgForm)} />
-        <Stat label="REPS" value={String(result.count)} />
+        <Stat
+          label={isClock ? 'HOLD' : 'REPS'}
+          value={isClock ? formatClock(result.value) : String(result.value)}
+        />
       </div>
 
       <button
