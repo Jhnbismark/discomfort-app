@@ -8,13 +8,16 @@ import type { ExerciseConfig } from '../exercises';
 export interface SessionResult {
   exerciseId: string;
   title: string;
-  metric: 'count' | 'clock';
-  value: number; // reps/jumps, or hold milliseconds
+  metric: 'count' | 'clock' | 'rt';
+  value: number; // reps/jumps, hold ms, or median reaction time ms (lower wins)
   avgForm: number;
-  /** attempt ended without a valid result (STARE: face lost) */
+  /** attempt ended without a valid result (STARE: face lost; PVT: no verified) */
   voided?: boolean;
   /** optional headline for the result screen ("BLINK.") */
   note?: string;
+  /** PVT secondary metrics */
+  lapses?: number;
+  falseStarts?: number;
 }
 
 interface Props {
@@ -29,7 +32,7 @@ const BONE = '#EDEDEA';
 export function Session({ config, onExit }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const trackerRef = useRef<ExerciseTracker>(config.makeTracker());
+  const trackerRef = useRef<ExerciseTracker>(config.makeTracker!());
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef(0);
   // last known-good tracker output — the loop closure must not read `live`

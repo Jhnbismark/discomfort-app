@@ -4,16 +4,20 @@ import { PlankTracker } from './trackers/plank';
 import { SkippingTracker } from './trackers/skipping';
 import { StillnessTracker } from './trackers/stillness';
 import { StareTracker } from './trackers/stare';
+import { GazeTracker } from './trackers/gaze';
 
 export type ExerciseId =
   | 'pushup'
   | 'plank'
   | 'skipping'
   | 'stillness'
-  | 'stare';
+  | 'stare'
+  | 'gaze'
+  | 'vigilance';
 
-/** How the giant readout renders and what the metric means. */
-export type Metric = 'count' | 'clock';
+/** How the giant readout renders and what the metric means. 'rt' = median
+ *  reaction time (PVT), lower wins. */
+export type Metric = 'count' | 'clock' | 'rt';
 
 /** FAR: phone 2–3m away, untouchable, giant readout, audio-primary. NEAR: phone
  *  at arm's length, calm, dim clock only, no visible buttons, hold-to-end. */
@@ -35,10 +39,15 @@ export interface ExerciseConfig {
   metric: Metric;
   /** unit label under the giant readout ("VERIFIED", "HOLD", "JUMPS") */
   readoutLabel: string;
-  makeTracker: () => ExerciseTracker;
+  /** tracker-based tests supply this; the PVT (vigilance) has no tracker */
+  makeTracker?: () => ExerciseTracker;
   placement: PlacementStep[];
   /** optional on-brand hard-rule warning shown on the pre-session screen */
   hardRule?: string;
+  /** NEAR MODE: render a gaze target dot + tiny clock instead of a big clock */
+  target?: boolean;
+  /** bespoke interaction screen instead of the tracker/hold-clock session */
+  interaction?: 'pvt';
 }
 
 const SIDE_ON: PlacementStep[] = [
@@ -67,6 +76,20 @@ const NEAR_FACE: PlacementStep[] = [
   { n: '02', text: 'FRONT-ON. GOOD, EVEN LIGHT ON YOUR FACE.' },
   { n: '03', text: 'FIRST SECOND CALIBRATES — KEEP EYES OPEN.' },
   { n: '04', text: 'THEN HOLD. THE CLOCK ENDS ON YOUR FIRST BLINK.' },
+];
+
+const NEAR_GAZE: PlacementStep[] = [
+  { n: '01', text: "PHONE AT ARM'S LENGTH, FACE FILLING THE FRAME." },
+  { n: '02', text: 'FRONT-ON. GOOD, EVEN LIGHT ON YOUR FACE.' },
+  { n: '03', text: 'FIRST 2 SECONDS CALIBRATE — LOOK AT THE DOT.' },
+  { n: '04', text: 'THEN HOLD YOUR GAZE. LOOK AWAY, IT PAUSES.' },
+];
+
+const NEAR_PVT: PlacementStep[] = [
+  { n: '01', text: "PHONE AT ARM'S LENGTH, FACE IN FRAME." },
+  { n: '02', text: 'SCREEN IS BLACK. WHEN A NUMBER APPEARS, TAP FAST.' },
+  { n: '03', text: 'TAP BEFORE IT APPEARS = FALSE START. DO NOT GUESS.' },
+  { n: '04', text: 'CAMERA VERIFIES EYES OPEN. 3 MINUTES.' },
 ];
 
 export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
@@ -127,5 +150,30 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     placement: NEAR_FACE,
     hardRule:
       'THE CLOCK RUNS UNTIL YOUR FIRST BLINK. HOLD YOUR EYES OPEN.',
+  },
+  gaze: {
+    id: 'gaze',
+    title: 'GAZE',
+    mode: 'near',
+    landmarker: 'face',
+    metric: 'clock',
+    readoutLabel: 'ON TARGET',
+    makeTracker: () => new GazeTracker(),
+    placement: NEAR_GAZE,
+    target: true,
+    hardRule:
+      'THE CLOCK ONLY RUNS WHILE YOUR EYES HOLD THE DOT. LOOK AWAY, IT PAUSES.',
+  },
+  vigilance: {
+    id: 'vigilance',
+    title: 'VIGILANCE',
+    mode: 'near',
+    landmarker: 'face',
+    metric: 'rt',
+    readoutLabel: 'MEDIAN RT',
+    placement: NEAR_PVT,
+    interaction: 'pvt',
+    hardRule:
+      'TAP THE INSTANT THE NUMBER APPEARS. LAPSES AND FALSE STARTS COST YOU.',
   },
 };

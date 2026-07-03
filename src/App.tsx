@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Session, formatClock, type SessionResult } from './screens/Session';
 import { NearSession } from './screens/NearSession';
+import { VigilanceSession } from './screens/VigilanceSession';
 import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
 
@@ -30,23 +31,17 @@ export function App() {
       )}
       {screen === 'session' &&
         selected &&
-        (selected.mode === 'near' ? (
-          <NearSession
-            config={selected}
-            onExit={(r) => {
-              setResult(r);
-              setScreen('result');
-            }}
-          />
-        ) : (
-          <Session
-            config={selected}
-            onExit={(r) => {
-              setResult(r);
-              setScreen('result');
-            }}
-          />
-        ))}
+        (() => {
+          const onExit = (r: SessionResult) => {
+            setResult(r);
+            setScreen('result');
+          };
+          if (selected.interaction === 'pvt')
+            return <VigilanceSession config={selected} onExit={onExit} />;
+          if (selected.mode === 'near')
+            return <NearSession config={selected} onExit={onExit} />;
+          return <Session config={selected} onExit={onExit} />;
+        })()}
       {screen === 'result' && result && (
         <ResultScreen result={result} onDone={() => setScreen('home')} />
       )}
@@ -75,8 +70,8 @@ function Home({ onPick }: { onPick: (id: ExerciseId) => void }) {
 
       <Section label="MIND">
         <TestButton label="STILLNESS" onClick={() => onPick('stillness')} />
-        <TestButton label="GAZE" disabled />
-        <TestButton label="VIGILANCE" disabled />
+        <TestButton label="GAZE" onClick={() => onPick('gaze')} />
+        <TestButton label="VIGILANCE" onClick={() => onPick('vigilance')} />
         <TestButton label="STARE" onClick={() => onPick('stare')} />
       </Section>
 
@@ -215,9 +210,10 @@ function ResultScreen({
   onDone: () => void;
 }) {
   const isClock = result.metric === 'clock';
+  const isRt = result.metric === 'rt';
   const big = isClock ? formatClock(result.value) : String(result.value);
 
-  // voided attempt (STARE face lost): no verified result
+  // voided attempt (STARE face lost / PVT no verified taps): no valid result
   if (result.voided) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6">
@@ -227,8 +223,41 @@ function ResultScreen({
         <div className="numerals text-5xl font-bold tracking-widest text-fault">
           VOID
         </div>
-        <div className="numerals mt-3 text-sm tracking-[0.3em] text-bone/50">
-          FACE LOST — NOTHING VERIFIED
+        <div className="numerals mt-3 max-w-xs text-center text-sm tracking-[0.3em] text-bone/50">
+          {isRt ? 'NO VERIFIED TAPS — EYES NOT SEEN' : 'FACE LOST — NOTHING VERIFIED'}
+        </div>
+        <button
+          onClick={onDone}
+          className="numerals mt-16 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
+        >
+          DONE
+        </button>
+      </div>
+    );
+  }
+
+  // PVT reaction-time result (lower wins)
+  if (isRt) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6">
+        <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
+          {result.title}
+        </div>
+        <div
+          className="numerals whitespace-nowrap px-2 leading-none text-earn"
+          style={{
+            fontSize: `min(26vh, ${Math.round((150 / Math.max(String(result.value).length, 1)) * 10) / 10}vw)`,
+          }}
+        >
+          {result.value}
+        </div>
+        <div className="numerals mt-2 text-lg tracking-[0.4em] text-bone/70">
+          MS MEDIAN · LOWER WINS
+        </div>
+        <div className="mt-12 flex w-full justify-center gap-10">
+          <Stat label="LAPSES" value={String(result.lapses ?? 0)} />
+          <Stat label="FALSE STARTS" value={String(result.falseStarts ?? 0)} />
+          <Stat label="SCORE" value={String(result.avgForm)} />
         </div>
         <button
           onClick={onDone}

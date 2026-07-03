@@ -23,7 +23,7 @@ interface Props {
 
 export function NearSession({ config, onExit }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const trackerRef = useRef<ExerciseTracker>(config.makeTracker());
+  const trackerRef = useRef<ExerciseTracker>(config.makeTracker!());
   const rafRef = useRef<number>(0);
   const lastTsRef = useRef(0);
   const pausedRef = useRef(false);
@@ -212,7 +212,31 @@ export function NearSession({ config, onExit }: Props) {
         </p>
       )}
 
-      {status === 'ready' && !camError && (
+      {status === 'ready' && !camError && config.target && (
+        // GAZE: the target dot IS the interface. Tiny clock + state above it.
+        <>
+          <div className="absolute top-[18vh] flex flex-col items-center">
+            <div
+              className="numerals text-2xl leading-none transition-colors duration-300"
+              style={{ color: isPaused ? DIM_FAULT : DIM_EARN }}
+            >
+              {clock}
+            </div>
+            <div className="numerals mt-2 text-[10px] tracking-[0.4em] text-bone/30">
+              {stateWord}
+            </div>
+          </div>
+          <div
+            className="h-6 w-6 rounded-full transition-colors duration-300"
+            style={{
+              background: isPaused ? DIM_FAULT : DIM_EARN,
+              boxShadow: `0 0 24px ${isPaused ? DIM_FAULT : DIM_EARN}`,
+            }}
+          />
+        </>
+      )}
+
+      {status === 'ready' && !camError && !config.target && (
         <>
           <div
             className="numerals whitespace-nowrap leading-none transition-colors duration-500"
