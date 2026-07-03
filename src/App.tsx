@@ -2,15 +2,30 @@ import { useEffect, useState } from 'react';
 import { Session, formatClock, type SessionResult } from './screens/Session';
 import { NearSession } from './screens/NearSession';
 import { VigilanceSession } from './screens/VigilanceSession';
+import { Identify } from './screens/Identify';
+import { Ranks } from './screens/Ranks';
 import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
+import { supabase } from './lib/supabase';
+import { useAuth } from './lib/useAuth';
 
-type Screen = 'home' | 'presession' | 'session' | 'result';
+type Screen =
+  | 'home'
+  | 'presession'
+  | 'session'
+  | 'result'
+  | 'identify'
+  | 'ranks';
+
+/** whether the latest result made it to the cloud ledger */
+export type SaveState = 'off' | 'saving' | 'saved' | 'error';
 
 export function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [selected, setSelected] = useState<ExerciseConfig | null>(null);
   const [result, setResult] = useState<SessionResult | null>(null);
+  const [saveState, setSaveState] = useState<SaveState>('off');
+  const { session, profile, profileLoaded, setProfile } = useAuth();
 
   return (
     <div className="mx-auto h-full max-w-md">
@@ -20,6 +35,33 @@ export function App() {
             setSelected(EXERCISES[id]);
             setScreen('presession');
           }}
+          onRanks={() => setScreen('ranks')}
+          onIdentify={() => setScreen('identify')}
+          identityLabel={
+            !profileLoaded
+              ? '…'
+              : profile
+                ? profile.handle
+                : session
+                  ? 'CLAIM HANDLE'
+                  : 'IDENTIFY'
+          }
+          identityUrgent={!!session && profileLoaded && !profile}
+        />
+      )}
+      {screen === 'identify' && (
+        <Identify
+          session={session}
+          profile={profile}
+          onProfileClaimed={(p) => setProfile(p)}
+          onBack={() => setScreen('home')}
+        />
+      )}
+      {screen === 'ranks' && (
+        <Ranks
+          userId={session?.user.id ?? null}
+          onBack={() => setScreen('home')}
+          onIdentify={() => setScreen('identify')}
         />
       )}
       {screen === 'presession' && selected && (
@@ -35,6 +77,24 @@ export function App() {
           const onExit = (r: SessionResult) => {
             setResult(r);
             setScreen('result');
+            if (session) {
+              setSaveState('saving');
+              void supabase
+                .from('sessions')
+                .insert({
+                  user_id: session.user.id,
+                  exercise_id: r.exerciseId,
+                  metric: r.metric,
+                  value: r.value,
+                  form_score: r.avgForm,
+                  lapses: r.lapses ?? null,
+                  false_starts: r.falseStarts ?? null,
+                  voided: r.voided ?? false,
+                })
+                .then(({ error }) => setSaveState(error ? 'error' : 'saved'));
+            } else {
+              setSaveState('off');
+            }
           };
           if (selected.interaction === 'pvt')
             return <VigilanceSession config={selected} onExit={onExit} />;
@@ -43,20 +103,49 @@ export function App() {
           return <Session config={selected} onExit={onExit} />;
         })()}
       {screen === 'result' && result && (
-        <ResultScreen result={result} onDone={() => setScreen('home')} />
+        <ResultScreen
+          result={result}
+          saveState={saveState}
+          onDone={() => setScreen('home')}
+        />
       )}
     </div>
   );
 }
 
 // ── HOME ───────────────────────────────────────────────────────────────
-function Home({ onPick }: { onPick: (id: ExerciseId) => void }) {
+function Home({
+  onPick,
+  onRanks,
+  onIdentify,
+  identityLabel,
+  identityUrgent,
+}: {
+  onPick: (id: ExerciseId) => void;
+  onRanks: () => void;
+  onIdentify: () => void;
+  identityLabel: string;
+  identityUrgent: boolean;
+}) {
   return (
     <div className="flex h-full flex-col px-5 py-8">
       <header className="mb-10">
-        <h1 className="numerals text-4xl font-bold tracking-tight text-bone">
-          DISCOMFORT
-        </h1>
+        <div className="flex items-start justify-between">
+          <h1 className="numerals text-4xl font-bold tracking-tight text-bone">
+            DISCOMFORT
+          </h1>
+          <button
+            onClick={onIdentify}
+            className={
+              'numerals border px-3 py-2 text-[11px] tracking-widest ' +
+              (identityUrgent
+                ? 'border-earn text-earn'
+                : 'border-bone/30 text-bone/60')
+            }
+          >
+            {identityLabel}
+          </button>
+        </div>
         <p className="mt-2 max-w-xs text-sm leading-snug text-bone/50">
           A rep that isn't seen doesn't exist. Every number is earned on camera.
         </p>
@@ -73,6 +162,10 @@ function Home({ onPick }: { onPick: (id: ExerciseId) => void }) {
         <TestButton label="GAZE" onClick={() => onPick('gaze')} />
         <TestButton label="VIGILANCE" onClick={() => onPick('vigilance')} />
         <TestButton label="STARE" onClick={() => onPick('stare')} />
+      </Section>
+
+      <Section label="LEDGER">
+        <TestButton label="RANKS" onClick={onRanks} />
       </Section>
 
       <div className="mt-auto" />
@@ -202,11 +295,38 @@ function PreSession({
 }
 
 // ── RESULT ─────────────────────────────────────────────────────────────
+function SaveLine({ saveState }: { saveState: SaveState }) {
+  const text =
+    saveState === 'saved'
+      ? 'SAVED TO THE LEDGER'
+      : saveState === 'saving'
+        ? 'SAVING…'
+        : saveState === 'error'
+          ? 'SAVE FAILED — RESULT KEPT LOCALLY ONLY'
+          : 'NOT IDENTIFIED — NOT SAVED';
+  return (
+    <p
+      className={
+        'numerals mt-8 text-center text-[10px] tracking-[0.3em] ' +
+        (saveState === 'saved'
+          ? 'text-earn/70'
+          : saveState === 'error'
+            ? 'text-fault'
+            : 'text-bone/30')
+      }
+    >
+      {text}
+    </p>
+  );
+}
+
 function ResultScreen({
   result,
+  saveState,
   onDone,
 }: {
   result: SessionResult;
+  saveState: SaveState;
   onDone: () => void;
 }) {
   const isClock = result.metric === 'clock';
@@ -226,9 +346,10 @@ function ResultScreen({
         <div className="numerals mt-3 max-w-xs text-center text-sm tracking-[0.3em] text-bone/50">
           {isRt ? 'NO VERIFIED TAPS — EYES NOT SEEN' : 'FACE LOST — NOTHING VERIFIED'}
         </div>
+        <SaveLine saveState={saveState} />
         <button
           onClick={onDone}
-          className="numerals mt-16 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
+          className="numerals mt-6 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
         >
           DONE
         </button>
@@ -259,9 +380,10 @@ function ResultScreen({
           <Stat label="FALSE STARTS" value={String(result.falseStarts ?? 0)} />
           <Stat label="SCORE" value={String(result.avgForm)} />
         </div>
+        <SaveLine saveState={saveState} />
         <button
           onClick={onDone}
-          className="numerals mt-16 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
+          className="numerals mt-6 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
         >
           DONE
         </button>
