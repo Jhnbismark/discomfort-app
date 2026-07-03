@@ -22,10 +22,22 @@ const LAPSE_RT = 500;
 const EYES_OPEN_EAR = 0.15; // fallback floor if calibration fails
 const EYES_OPEN_RATIO = 0.6; // eyes closed when EAR < calibrated open × this
 const CALIB_SAMPLES = 30; // face frames needed before START unlocks
+// face detection is the expensive call — run it at ~7Hz so the rAF loop stays
+// free to render the stimulus counter smoothly at display rate
+const DETECT_EVERY_MS = 150;
 
 interface Trial {
   rt: number;
   verified: boolean;
+}
+
+/** per-trial feedback shown on the WAIT screen. rt set = a tapped result
+ *  (shown BIG — it is the result of that trial); note-only = lapse/false start. */
+interface Feedback {
+  rt?: number;
+  note?: string;
+  bad: boolean;
+  key: number;
 }
 
 interface Props {
@@ -54,12 +66,15 @@ export function VigilanceSession({ config, onExit }: Props) {
   const onExitRef = useRef(onExit);
   onExitRef.current = onExit;
 
+  const lastDetectRef = useRef(0);
+
   const [camError, setCamError] = useState<string | null>(null);
   const [stage, setStage] = useState<'framing' | 'live'>('framing');
   const [calibrated, setCalibrated] = useState(false);
   const [display, setDisplay] = useState<'waiting' | 'stimulus'>('waiting');
   const [stimMs, setStimMs] = useState(0);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [taps, setTaps] = useState(0);
   const [verified, setVerified] = useState(true);
   const [remainingS, setRemainingS] = useState(DURATION_MS / 1000);
 
@@ -120,7 +135,11 @@ export function VigilanceSession({ config, onExit }: Props) {
         if (!stimActiveRef.current) return;
         stimActiveRef.current = false;
         trialsRef.current.push({ rt: NO_TAP_MS, verified: faceOkRef.current });
-        setFeedback('TOO SLOW — LAPSE');
+        setFeedback({
+          note: 'TOO SLOW — LAPSE',
+          bad: true,
+          key: performance.now(),
+        });
         setDisplay('waiting');
         scheduleNext();
       }, NO_TAP_MS);
@@ -170,24 +189,30 @@ export function VigilanceSession({ config, onExit }: Props) {
       if (ts <= lastTsRef.current) ts = lastTsRef.current + 1;
       lastTsRef.current = ts;
 
-      const lms = detect(video, ts);
-      const facePres = !!lms && facePresent(lms);
+      // detection only every DETECT_EVERY_MS — the stimulus counter below
+      // must update every displayed frame or it reads as broken
+      if (ts - lastDetectRef.current >= DETECT_EVERY_MS) {
+        lastDetectRef.current = ts;
+        const lms = detect(video, ts);
+        const facePres = !!lms && facePresent(lms);
 
-      if (stageRef.current === 'framing') {
-        // gather the user's open-eye EAR while they look at the instructions
-        if (facePres) {
-          const samples = earSamplesRef.current;
-          samples.push(meanEAR(lms));
-          if (samples.length > CALIB_SAMPLES * 2) samples.shift();
-          if (samples.length >= CALIB_SAMPLES) setCalibrated(true);
+        if (stageRef.current === 'framing') {
+          // gather the user's open-eye EAR while they read the instructions
+          if (facePres) {
+            const samples = earSamplesRef.current;
+            samples.push(meanEAR(lms));
+            if (samples.length > CALIB_SAMPLES * 2) samples.shift();
+            if (samples.length >= CALIB_SAMPLES) setCalibrated(true);
+          }
+          setVerified((prev) => (prev === facePres ? prev : facePres));
+        } else {
+          const ok = facePres && meanEAR(lms) > earThreshRef.current;
+          faceOkRef.current = ok;
+          setVerified((prev) => (prev === ok ? prev : ok));
         }
-        setVerified((prev) => (prev === facePres ? prev : facePres));
-        return;
       }
 
-      const ok = facePres && meanEAR(lms) > earThreshRef.current;
-      faceOkRef.current = ok;
-      setVerified((prev) => (prev === ok ? prev : ok));
+      if (stageRef.current === 'framing') return;
 
       if (stimActiveRef.current) {
         setStimMs(Math.round(ts - stimTsRef.current));
@@ -230,14 +255,20 @@ export function VigilanceSession({ config, onExit }: Props) {
       stimActiveRef.current = false;
       const v = faceOkRef.current;
       trialsRef.current.push({ rt, verified: v });
-      setFeedback(v ? `${rt} MS` : `${rt} MS — UNVERIFIED`);
+      setFeedback({
+        rt,
+        note: v ? undefined : 'UNVERIFIED — EYES NOT SEEN',
+        bad: !v,
+        key: performance.now(),
+      });
+      setTaps((n) => n + 1);
       setDisplay('waiting');
       audioSignals.tick();
       scheduleNext();
     } else {
       // tapped with no stimulus on screen
       falseStartsRef.current += 1;
-      setFeedback('FALSE START');
+      setFeedback({ note: 'FALSE START', bad: true, key: performance.now() });
       audioSignals.buzz();
     }
   }, [scheduleNext]);
@@ -332,23 +363,41 @@ export function VigilanceSession({ config, onExit }: Props) {
 
       {ready && !framing && display === 'waiting' && (
         <div className="flex flex-col items-center">
-          <p className="numerals text-sm tracking-[0.5em] text-bone/25">WAIT</p>
-          {feedback ? (
+          {feedback && feedback.rt !== undefined ? (
+            // your reaction time IS the result of that trial — show it big
+            <div key={feedback.key} className="count-pop flex flex-col items-center">
+              <div
+                className={
+                  'numerals leading-none ' +
+                  (feedback.bad ? 'text-fault' : 'text-earn')
+                }
+                style={{ fontSize: 'min(18vh, 30vw)' }}
+              >
+                {feedback.rt}
+              </div>
+              <div className="numerals mt-2 text-sm tracking-[0.4em] text-bone/60">
+                MS{feedback.rt > LAPSE_RT ? ' — LAPSE' : ''}
+              </div>
+              {feedback.note && (
+                <div className="numerals mt-2 text-xs tracking-[0.3em] text-fault">
+                  {feedback.note}
+                </div>
+              )}
+            </div>
+          ) : feedback ? (
             <p
-              className={
-                'numerals mt-6 text-2xl tracking-widest ' +
-                (feedback.includes('FALSE') || feedback.includes('LAPSE')
-                  ? 'text-fault'
-                  : 'text-bone/70')
-              }
+              key={feedback.key}
+              className="count-pop numerals text-2xl tracking-widest text-fault"
             >
-              {feedback}
+              {feedback.note}
             </p>
-          ) : (
-            <p className="numerals mt-6 text-[10px] tracking-[0.3em] text-bone/30">
-              TAP THE INSTANT THE NUMBER APPEARS
-            </p>
-          )}
+          ) : null}
+          <p className="numerals mt-10 text-sm tracking-[0.5em] text-bone/25">
+            WAIT
+          </p>
+          <p className="numerals mt-3 text-[10px] tracking-[0.3em] text-bone/30">
+            TAP THE INSTANT THE NUMBER APPEARS
+          </p>
         </div>
       )}
 
@@ -357,6 +406,9 @@ export function VigilanceSession({ config, onExit }: Props) {
         <div className="absolute inset-x-0 top-3 flex items-center justify-between px-4">
           <span className="numerals text-[11px] tracking-widest text-bone/30">
             {formatMMSS(remainingS)}
+          </span>
+          <span className="numerals text-[11px] tracking-widest text-bone/30">
+            TAPS {taps}
           </span>
           <span
             className={

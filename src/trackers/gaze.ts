@@ -16,6 +16,8 @@ const EYES_OPEN_EAR = 0.15; // fallback eyes-open floor if calibration fails
 const EYES_OPEN_RATIO = 0.6; // eyes closed when EAR < calibrated open × this
 const GRACE_MS = 300;
 const DT_CAP_MS = 100;
+const GAZE_EMA_ALPHA = 0.3; // smooth the raw iris signal — it's jittery
+const CLOSED_FRAMES = 2; // eyes-closed frames before pausing (no grace after)
 
 export class GazeTracker implements ExerciseTracker {
   private phase: 'calibrating' | 'holding' | 'paused' = 'calibrating';
@@ -27,6 +29,8 @@ export class GazeTracker implements ExerciseTracker {
   private neutral = { x: 0.5, y: 0.5 };
   private earCalib: number[] = [];
   private earOpenThresh = EYES_OPEN_EAR;
+  private smooth: { x: number; y: number } | null = null;
+  private closedFrames = 0;
   private holdMs = 0;
   private devSum = 0;
   private devN = 0;
@@ -41,6 +45,8 @@ export class GazeTracker implements ExerciseTracker {
     this.neutral = { x: 0.5, y: 0.5 };
     this.earCalib = [];
     this.earOpenThresh = EYES_OPEN_EAR;
+    this.smooth = null;
+    this.closedFrames = 0;
     this.holdMs = 0;
     this.devSum = 0;
     this.devN = 0;
@@ -55,12 +61,22 @@ export class GazeTracker implements ExerciseTracker {
     this.lastTs = timestampMs;
     this.started = true;
 
-    const gaze = facePresent(landmarks) ? gazeVector(landmarks) : null;
+    const raw = facePresent(landmarks) ? gazeVector(landmarks) : null;
 
     // no face / no iris -> can't judge
-    if (!gaze) {
+    if (!raw) {
+      this.smooth = null; // don't blend across a dropout
       return this.faultOrGrace(timestampMs, 'FACE LOST', NaN, NaN);
     }
+
+    // EMA smooth the iris signal — raw per-frame gaze jitters
+    this.smooth = this.smooth
+      ? {
+          x: GAZE_EMA_ALPHA * raw.x + (1 - GAZE_EMA_ALPHA) * this.smooth.x,
+          y: GAZE_EMA_ALPHA * raw.y + (1 - GAZE_EMA_ALPHA) * this.smooth.y,
+        }
+      : raw;
+    const gaze = this.smooth;
 
     const ear = meanEAR(landmarks);
 
@@ -88,7 +104,16 @@ export class GazeTracker implements ExerciseTracker {
 
     const dev = Math.hypot(gaze.x - this.neutral.x, gaze.y - this.neutral.y);
     const eyesOpen = ear > this.earOpenThresh;
+    this.closedFrames = eyesOpen ? 0 : this.closedFrames + 1;
     const onTarget = dev < TOLERANCE;
+
+    // eyes closed is a strong, deliberate signal (a blink) — pause immediately
+    // once confirmed over consecutive frames, instead of hiding it in the
+    // jitter grace window
+    if (this.closedFrames >= CLOSED_FRAMES) {
+      this.lastValidTs = -Infinity; // no grace out of a confirmed blink
+      return this.state('paused', ['EYES CLOSED'], dev, ear);
+    }
 
     if (eyesOpen && onTarget) {
       this.lastValidTs = timestampMs;

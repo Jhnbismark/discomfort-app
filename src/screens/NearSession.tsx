@@ -306,6 +306,8 @@ export function NearSession({ config, onExit }: Props) {
       {/* ── LIVE: dark test screen ── */}
       {ready && !framing && config.target && (
         // GAZE: the target dot IS the interface. Tiny clock + state above it.
+        // A ring around the dot mirrors the detector live: it swells as your
+        // gaze drifts and hits the fault color at the tolerance edge.
         <>
           <div className="absolute top-[18vh] flex flex-col items-center">
             <div
@@ -318,13 +320,25 @@ export function NearSession({ config, onExit }: Props) {
               {stateWord}
             </div>
           </div>
-          <div
-            className="h-6 w-6 rounded-full transition-colors duration-300"
-            style={{
-              background: isPaused ? DIM_FAULT : DIM_EARN,
-              boxShadow: `0 0 24px ${isPaused ? DIM_FAULT : DIM_EARN}`,
-            }}
-          />
+          <div className="relative flex items-center justify-center">
+            <div
+              className="absolute rounded-full border"
+              style={{
+                width: `${24 + gazeDrift(live) * 56}px`,
+                height: `${24 + gazeDrift(live) * 56}px`,
+                borderColor:
+                  gazeDrift(live) >= 1 || isPaused ? DIM_FAULT : DIM_EARN,
+                opacity: 0.6,
+              }}
+            />
+            <div
+              className="h-6 w-6 rounded-full transition-colors duration-300"
+              style={{
+                background: isPaused ? DIM_FAULT : DIM_EARN,
+                boxShadow: `0 0 24px ${isPaused ? DIM_FAULT : DIM_EARN}`,
+              }}
+            />
+          </div>
         </>
       )}
 
@@ -390,6 +404,17 @@ export function NearSession({ config, onExit }: Props) {
       )}
     </div>
   );
+}
+
+/** GAZE deviation as a 0–1.4 fraction of the tolerance cone (drives the
+ *  feedback ring). Falls back to 0 while calibrating / dev unavailable. */
+function gazeDrift(s: TrackerState): number {
+  const dev = s.debug?.dev;
+  const tol = s.debug?.tol;
+  if (dev === undefined || tol === undefined || !tol || Number.isNaN(dev)) {
+    return 0;
+  }
+  return Math.min(dev / tol, 1.4);
 }
 
 /** phase/fault -> the dim status word under the clock. */
