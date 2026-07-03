@@ -9,6 +9,8 @@ import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
 import { supabase, type WagerSubmitResult } from './lib/supabase';
 import { useAuth } from './lib/useAuth';
+import { shareReceipt } from './lib/receipt';
+import { PlacementDiagram } from './screens/PlacementDiagram';
 
 type Screen =
   | 'home'
@@ -168,6 +170,7 @@ export function App() {
           result={result}
           saveState={saveState}
           wagerNote={wagerNote}
+          handle={profile?.handle ?? null}
           onDone={() => setScreen('home')}
         />
       )}
@@ -327,7 +330,11 @@ function PreSession({
         {config.title}
       </h1>
 
-      <div className="mt-10 space-y-6 text-bone/80">
+      <div className="mt-6">
+        <PlacementDiagram kind={config.diagram} />
+      </div>
+
+      <div className="mt-8 space-y-6 text-bone/80">
         {config.placement.map((step) => (
           <div key={step.n} className="flex items-start gap-4">
             <span className="numerals text-sm text-earn">{step.n}</span>
@@ -407,15 +414,56 @@ function SaveLine({
   );
 }
 
-function ResultScreen({
+function ResultActions({
   result,
+  handle,
   saveState,
   wagerNote,
   onDone,
 }: {
   result: SessionResult;
+  handle: string | null;
   saveState: SaveState;
   wagerNote: string | null;
+  onDone: () => void;
+}) {
+  const [sharing, setSharing] = useState(false);
+  return (
+    <div className="w-full">
+      <SaveLine saveState={saveState} wagerNote={wagerNote} />
+      <div className="mt-6 flex w-full gap-3">
+        <button
+          onClick={() => {
+            setSharing(true);
+            void shareReceipt(result, handle).finally(() => setSharing(false));
+          }}
+          disabled={sharing}
+          className="numerals flex-1 border-2 border-earn py-6 text-xl font-bold tracking-[0.3em] text-earn active:bg-earn active:text-void"
+        >
+          {sharing ? '…' : 'RECEIPT'}
+        </button>
+        <button
+          onClick={onDone}
+          className="numerals flex-1 border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
+        >
+          DONE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ResultScreen({
+  result,
+  saveState,
+  wagerNote,
+  handle,
+  onDone,
+}: {
+  result: SessionResult;
+  saveState: SaveState;
+  wagerNote: string | null;
+  handle: string | null;
   onDone: () => void;
 }) {
   const isClock = result.metric === 'clock';
@@ -435,13 +483,13 @@ function ResultScreen({
         <div className="numerals mt-3 max-w-xs text-center text-sm tracking-[0.3em] text-bone/50">
           {isRt ? 'NO VERIFIED TAPS — EYES NOT SEEN' : 'FACE LOST — NOTHING VERIFIED'}
         </div>
-        <SaveLine saveState={saveState} wagerNote={wagerNote} />
-        <button
-          onClick={onDone}
-          className="numerals mt-6 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
-        >
-          DONE
-        </button>
+        <ResultActions
+          result={result}
+          handle={handle}
+          saveState={saveState}
+          wagerNote={wagerNote}
+          onDone={onDone}
+        />
       </div>
     );
   }
@@ -469,13 +517,13 @@ function ResultScreen({
           <Stat label="FALSE STARTS" value={String(result.falseStarts ?? 0)} />
           <Stat label="SCORE" value={String(result.avgForm)} />
         </div>
-        <SaveLine saveState={saveState} wagerNote={wagerNote} />
-        <button
-          onClick={onDone}
-          className="numerals mt-6 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
-        >
-          DONE
-        </button>
+        <ResultActions
+          result={result}
+          handle={handle}
+          saveState={saveState}
+          wagerNote={wagerNote}
+          onDone={onDone}
+        />
       </div>
     );
   }

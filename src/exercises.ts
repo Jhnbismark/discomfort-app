@@ -1,4 +1,4 @@
-import type { ExerciseTracker } from './trackers/types';
+﻿import type { ExerciseTracker } from './trackers/types';
 import { PushupTracker } from './trackers/pushup';
 import { PlankTracker } from './trackers/plank';
 import { SkippingTracker } from './trackers/skipping';
@@ -31,6 +31,9 @@ export interface PlacementStep {
   text: string;
 }
 
+/** which placement diagram the pre-session screen draws */
+export type Diagram = 'side' | 'front' | 'near' | 'face';
+
 export interface ExerciseConfig {
   id: ExerciseId;
   title: string;
@@ -42,6 +45,7 @@ export interface ExerciseConfig {
   /** tracker-based tests supply this; the PVT (vigilance) has no tracker */
   makeTracker?: () => ExerciseTracker;
   placement: PlacementStep[];
+  diagram: Diagram;
   /** optional on-brand hard-rule warning shown on the pre-session screen */
   hardRule?: string;
   /** NEAR MODE: render a gaze target dot + tiny clock instead of a big clock */
@@ -102,6 +106,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     readoutLabel: 'VERIFIED',
     makeTracker: () => new PushupTracker(),
     placement: SIDE_ON,
+    diagram: 'side',
     hardRule:
       "A REP THAT DOESN'T BREAK 100° AT THE ELBOW IS NOT COUNTED. NO PARTIAL CREDIT.",
   },
@@ -114,6 +119,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     readoutLabel: 'HOLD',
     makeTracker: () => new PlankTracker(),
     placement: SIDE_ON,
+    diagram: 'side',
     hardRule:
       'THE CLOCK ONLY RUNS WHILE YOUR BODY LINE IS STRAIGHT. BREAK FORM, IT PAUSES.',
   },
@@ -126,6 +132,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     readoutLabel: 'JUMPS',
     makeTracker: () => new SkippingTracker(),
     placement: FRONT_ON,
+    diagram: 'front',
   },
   stillness: {
     id: 'stillness',
@@ -136,6 +143,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     readoutLabel: 'STILL',
     makeTracker: () => new StillnessTracker(),
     placement: NEAR_UPPER,
+    diagram: 'near',
     hardRule:
       "THE CLOCK ONLY RUNS WHILE YOU'RE STILL. ANY MOVEMENT PAUSES IT.",
   },
@@ -148,6 +156,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     readoutLabel: "DON'T BLINK",
     makeTracker: () => new StareTracker(),
     placement: NEAR_FACE,
+    diagram: 'face',
     hardRule:
       'THE CLOCK RUNS UNTIL YOUR FIRST BLINK. HOLD YOUR EYES OPEN.',
   },
@@ -160,6 +169,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     readoutLabel: 'ON TARGET',
     makeTracker: () => new GazeTracker(),
     placement: NEAR_GAZE,
+    diagram: 'face',
     target: true,
     hardRule:
       'THE CLOCK ONLY RUNS WHILE YOUR EYES HOLD THE DOT. LOOK AWAY, IT PAUSES.',
@@ -172,6 +182,7 @@ export const EXERCISES: Record<ExerciseId, ExerciseConfig> = {
     metric: 'rt',
     readoutLabel: 'MEDIAN RT',
     placement: NEAR_PVT,
+    diagram: 'face',
     interaction: 'pvt',
     hardRule:
       'TAP THE INSTANT THE NUMBER APPEARS. LAPSES AND FALSE STARTS COST YOU.',
