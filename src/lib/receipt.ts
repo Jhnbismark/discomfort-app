@@ -1,5 +1,6 @@
 import type { SessionResult } from '../screens/Session';
 import { formatClock } from '../screens/Session';
+import { formGrade } from './formGrade';
 
 /** RECEIPT — a shareable proof-of-result image, drawn on canvas in brand
  *  style. 1080×1350 (4:5) so it posts clean anywhere. Voided attempts get
@@ -109,7 +110,7 @@ export function drawReceipt(
       stats.push(`LAPSES ${result.lapses ?? 0}`);
       stats.push(`FALSE STARTS ${result.falseStarts ?? 0}`);
     } else if (result.exerciseId !== 'stare') {
-      stats.push(`FORM ${result.avgForm}`);
+      stats.push(`FORM ${result.avgForm} · ${formGrade(result.avgForm).word}`);
     }
     ctx.textAlign = 'center';
     ctx.fillText(stats.join('   ·   '), W / 2, H / 2 + 330);
@@ -136,6 +137,15 @@ export async function shareReceipt(
   result: SessionResult,
   handle: string | null
 ): Promise<void> {
+  // canvas only uses a webfont that's already loaded — make sure it is
+  try {
+    await Promise.all([
+      document.fonts.load(`700 300px ${MONO}`),
+      document.fonts.load(`400 30px ${MONO}`),
+    ]);
+  } catch {
+    // fallback stack still draws fine
+  }
   const canvas = drawReceipt(result, handle);
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, 'image/png')

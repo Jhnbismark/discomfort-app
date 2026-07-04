@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  FilesetResolver,
-  FaceLandmarker,
-  type NormalizedLandmark,
-} from '@mediapipe/tasks-vision';
+import type { FaceLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
 
 /** Lazy-load the MediaPipe Face Landmarker (iris + eye landmarks) on demand.
  *  Only loaded for tests that need it (STARE, later GAZE/VIGILANCE). All
@@ -28,9 +24,11 @@ export function useFaceLandmarker(active: boolean) {
     (async () => {
       try {
         setStatus('loading');
-        const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+        // dynamic import: mediapipe chunk only downloads when a session starts
+        const mp = await import('@mediapipe/tasks-vision');
+        const vision = await mp.FilesetResolver.forVisionTasks(WASM_BASE);
         if (cancelled) return;
-        const landmarker = await FaceLandmarker.createFromOptions(vision, {
+        const landmarker = await mp.FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: MODEL, delegate: 'GPU' },
           runningMode: 'VIDEO',
           numFaces: 1,

@@ -14,4 +14,16 @@ export default defineConfig({
     host: true,
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // keep the big third-party code in its own cacheable chunks; mediapipe
+        // is already split off by the dynamic import in the landmarker hooks
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          supabase: ['@supabase/supabase-js'],
+        },
+      },
+    },
+  },
 });

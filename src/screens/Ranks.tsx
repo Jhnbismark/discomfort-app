@@ -66,7 +66,7 @@ export function Ranks({ userId, onBack, onIdentify }: Props) {
   }, [rows, tab]);
 
   return (
-    <div className="flex h-full flex-col px-5 py-8">
+    <div className="screen-in flex h-full flex-col px-5 py-8">
       <button
         onClick={onBack}
         className="numerals mb-6 self-start text-xs tracking-widest text-bone/50"

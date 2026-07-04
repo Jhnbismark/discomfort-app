@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  FilesetResolver,
-  PoseLandmarker,
-  type NormalizedLandmark,
-} from '@mediapipe/tasks-vision';
+import type { PoseLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision';
 
 /** Lazy-load the MediaPipe Pose model on session start. All pose processing is
  *  client-side — frames never leave the device; only numeric results are used.
@@ -28,9 +24,12 @@ export function usePoseLandmarker(active: boolean) {
     (async () => {
       try {
         setStatus('loading');
-        const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
+        // dynamic import: the ~MB mediapipe chunk only downloads when a
+        // session actually starts, not on app load
+        const mp = await import('@mediapipe/tasks-vision');
+        const vision = await mp.FilesetResolver.forVisionTasks(WASM_BASE);
         if (cancelled) return;
-        const landmarker = await PoseLandmarker.createFromOptions(vision, {
+        const landmarker = await mp.PoseLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: MODEL_LITE, delegate: 'GPU' },
           runningMode: 'VIDEO',
           numPoses: 1,

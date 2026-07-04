@@ -5,6 +5,8 @@ import { VigilanceSession } from './screens/VigilanceSession';
 import { Identify } from './screens/Identify';
 import { Ranks } from './screens/Ranks';
 import { Wagers } from './screens/Wagers';
+import { Log } from './screens/Log';
+import { formGrade } from './lib/formGrade';
 import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
 import { supabase, type WagerSubmitResult } from './lib/supabase';
@@ -19,7 +21,8 @@ type Screen =
   | 'result'
   | 'identify'
   | 'ranks'
-  | 'wagers';
+  | 'wagers'
+  | 'log';
 
 /** whether the latest result made it to the cloud ledger */
 export type SaveState = 'off' | 'saving' | 'saved' | 'error';
@@ -44,6 +47,7 @@ export function App() {
           }}
           onRanks={() => setScreen('ranks')}
           onWagers={() => setScreen('wagers')}
+          onLog={() => setScreen('log')}
           onIdentify={() => setScreen('identify')}
           identityLabel={
             !profileLoaded
@@ -63,6 +67,13 @@ export function App() {
           profile={profile}
           onProfileClaimed={(p) => setProfile(p)}
           onBack={() => setScreen('home')}
+        />
+      )}
+      {screen === 'log' && (
+        <Log
+          userId={session?.user.id ?? null}
+          onBack={() => setScreen('home')}
+          onIdentify={() => setScreen('identify')}
         />
       )}
       {screen === 'ranks' && (
@@ -157,6 +168,14 @@ export function App() {
                     ? `WAGER WON — RATING +${myDelta}`
                     : `WAGER LOST — RATING ${myDelta}`
               );
+              // the resolution just moved this user's elo — refresh the
+              // profile so the account chip isn't stale until next reload
+              const { data: fresh } = await supabase
+                .from('profiles')
+                .select('id, handle, elo')
+                .eq('id', uid)
+                .maybeSingle();
+              if (fresh) setProfile(fresh);
             })();
           };
           if (selected.interaction === 'pvt')
@@ -183,6 +202,7 @@ function Home({
   onPick,
   onRanks,
   onWagers,
+  onLog,
   onIdentify,
   identityLabel,
   identityUrgent,
@@ -190,12 +210,13 @@ function Home({
   onPick: (id: ExerciseId) => void;
   onRanks: () => void;
   onWagers: () => void;
+  onLog: () => void;
   onIdentify: () => void;
   identityLabel: string;
   identityUrgent: boolean;
 }) {
   return (
-    <div className="flex h-full flex-col px-5 py-8">
+    <div className="screen-in flex h-full flex-col overflow-y-auto px-5 py-8">
       <header className="mb-10">
         <div className="flex items-start justify-between">
           <h1 className="numerals text-4xl font-bold tracking-tight text-bone">
@@ -234,6 +255,7 @@ function Home({
       <Section label="LEDGER">
         <TestButton label="RANKS" onClick={onRanks} />
         <TestButton label="WAGERS" onClick={onWagers} />
+        <TestButton label="LOG" onClick={onLog} />
       </Section>
 
       <div className="mt-auto" />
@@ -319,7 +341,7 @@ function PreSession({
   }
 
   return (
-    <div className="flex h-full flex-col px-6 py-10">
+    <div className="screen-in flex h-full flex-col overflow-y-auto px-6 py-10">
       <button
         onClick={onBack}
         className="numerals mb-8 self-start text-xs tracking-widest text-bone/50"
@@ -473,7 +495,7 @@ function ResultScreen({
   // voided attempt (STARE face lost / PVT no verified taps): no valid result
   if (result.voided) {
     return (
-      <div className="flex h-full flex-col items-center justify-center px-6">
+      <div className="screen-in flex h-full flex-col items-center justify-center px-6">
         <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
           {result.title}
         </div>
@@ -497,7 +519,7 @@ function ResultScreen({
   // PVT reaction-time result (lower wins)
   if (isRt) {
     return (
-      <div className="flex h-full flex-col items-center justify-center px-6">
+      <div className="screen-in flex h-full flex-col items-center justify-center px-6">
         <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
           {result.title}
         </div>
@@ -529,7 +551,7 @@ function ResultScreen({
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center px-6">
+    <div className="screen-in flex h-full flex-col items-center justify-center px-6">
       <div className="numerals mb-4 text-sm tracking-[0.4em] text-bone/40">
         {result.title}
       </div>
@@ -550,26 +572,46 @@ function ResultScreen({
         {isClock ? 'VERIFIED HOLD' : 'VERIFIED'}
       </div>
 
-      <div className="mt-12 flex w-full justify-center gap-12">
-        {result.exerciseId === 'stare' ? (
+      {result.exerciseId === 'stare' ? (
+        <div className="mt-12 flex w-full justify-center gap-12">
           <Stat label="HELD" value={formatClock(result.value)} />
-        ) : (
-          <>
-            <Stat label="AVG FORM" value={String(result.avgForm)} />
-            <Stat
-              label={isClock ? 'HOLD' : 'REPS'}
-              value={isClock ? formatClock(result.value) : String(result.value)}
-            />
-          </>
-        )}
-      </div>
+        </div>
+      ) : (
+        <FormVerdict score={result.avgForm} />
+      )}
 
-      <button
-        onClick={onDone}
-        className="numerals mt-16 w-full border-2 border-bone/40 py-6 text-xl font-bold tracking-[0.3em] text-bone active:bg-bone active:text-void"
-      >
-        DONE
-      </button>
+      <ResultActions
+        result={result}
+        handle={handle}
+        saveState={saveState}
+        wagerNote={wagerNote}
+        onDone={onDone}
+      />
+    </div>
+  );
+}
+
+/** form score as a verdict: bar + number + a word that doesn't flatter */
+function FormVerdict({ score }: { score: number }) {
+  const g = formGrade(score);
+  return (
+    <div className="mt-12 w-full max-w-xs">
+      <div className="flex items-baseline justify-between">
+        <span className="numerals text-[10px] tracking-widest text-bone/40">
+          FORM
+        </span>
+        <span className={'numerals text-sm font-bold tracking-[0.2em] ' + g.cls}>
+          {score} · {g.word}
+        </span>
+      </div>
+      <div className="mt-2 h-1 w-full bg-bone/15">
+        <div
+          className={
+            'h-full ' + (score >= 85 ? 'bg-earn' : score >= 70 ? 'bg-bone/60' : 'bg-fault')
+          }
+          style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
+        />
+      </div>
     </div>
   );
 }

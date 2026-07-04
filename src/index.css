@@ -48,6 +48,21 @@
   }
 }
 
+/* every screen slides in a touch — cheap, hard-edged, no cross-fade mush */
+@keyframes screen-in {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+.screen-in {
+  animation: screen-in 0.18s ease-out;
+}
+
 /* rep-count readout pops when the number changes — proof the count landed */
 @keyframes count-pop {
   0% {

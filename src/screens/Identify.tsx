@@ -18,7 +18,7 @@ interface Props {
 
 export function Identify({ session, profile, onProfileClaimed, onBack }: Props) {
   return (
-    <div className="flex h-full flex-col px-6 py-10">
+    <div className="screen-in flex h-full flex-col px-6 py-10">
       <button
         onClick={onBack}
         className="numerals mb-8 self-start text-xs tracking-widest text-bone/50"
