@@ -27,6 +27,17 @@ type Screen =
 /** whether the latest result made it to the cloud ledger */
 export type SaveState = 'off' | 'saving' | 'saved' | 'error';
 
+/** A failed magic link redirects here with the failure in the URL hash
+ *  (e.g. #error_code=otp_expired). Grab it once at load so IDENTIFY can say
+ *  what happened instead of silently landing the user signed-out. */
+const AUTH_NOTICE: string | null = (() => {
+  const h = new URLSearchParams(window.location.hash.slice(1));
+  const code = h.get('error_code') ?? h.get('error');
+  if (!code) return null;
+  history.replaceState(null, '', window.location.pathname);
+  return code.replace(/_/g, ' ').toUpperCase();
+})();
+
 export function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [selected, setSelected] = useState<ExerciseConfig | null>(null);
@@ -67,6 +78,7 @@ export function App() {
           profile={profile}
           onProfileClaimed={(p) => setProfile(p)}
           onBack={() => setScreen('home')}
+          authNotice={AUTH_NOTICE}
         />
       )}
       {screen === 'log' && (

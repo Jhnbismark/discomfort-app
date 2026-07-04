@@ -2,9 +2,10 @@ import { useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, type Profile } from '../lib/supabase';
 
-/** IDENTIFY — sign in with a magic link, then claim a HANDLE (the name the
- *  leaderboard knows you by). Signed-in-with-handle shows the account +
- *  SIGN OUT. Brutalist: one column, hard borders, no fluff. */
+/** IDENTIFY — email gets a 6-digit code (and a fallback link); typing the
+ *  code signs you in without ever leaving the app, which is the only flow
+ *  that survives mobile mail clients and installed-PWA storage isolation.
+ *  Then claim a HANDLE (the name the leaderboard knows you by). */
 
 const SITE_URL = 'https://discomfort-app.pages.dev';
 const HANDLE_RE = /^[A-Z0-9]{3,12}$/;
@@ -14,9 +15,17 @@ interface Props {
   profile: Profile | null;
   onProfileClaimed: (p: Profile) => void;
   onBack: () => void;
+  /** auth error carried back on the URL hash by a failed magic link */
+  authNotice: string | null;
 }
 
-export function Identify({ session, profile, onProfileClaimed, onBack }: Props) {
+export function Identify({
+  session,
+  profile,
+  onProfileClaimed,
+  onBack,
+  authNotice,
+}: Props) {
   return (
     <div className="screen-in flex h-full flex-col px-6 py-10">
       <button
@@ -29,7 +38,7 @@ export function Identify({ session, profile, onProfileClaimed, onBack }: Props) 
         IDENTIFY
       </h1>
 
-      {!session && <EmailStep />}
+      {!session && <EmailStep authNotice={authNotice} />}
       {session && !profile && (
         <HandleStep userId={session.user.id} onClaimed={onProfileClaimed} />
       )}
@@ -49,12 +58,15 @@ export function Identify({ session, profile, onProfileClaimed, onBack }: Props) 
   );
 }
 
-function EmailStep() {
+function EmailStep({ authNotice }: { authNotice: string | null }) {
   const [email, setEmail] = useState('');
   const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>(
     'idle'
   );
   const [error, setError] = useState('');
+  const [code, setCode] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [codeError, setCodeError] = useState('');
 
   const send = async () => {
     const addr = email.trim().toLowerCase();
@@ -72,24 +84,86 @@ function EmailStep() {
     }
   };
 
+  const verify = async () => {
+    if (code.length !== 6 || verifying) return;
+    setVerifying(true);
+    setCodeError('');
+    const { error: err } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token: code,
+      type: 'email',
+    });
+    if (err) {
+      setCodeError(err.message.toUpperCase());
+      setVerifying(false);
+    }
+    // on success onAuthStateChange flips this screen to the HANDLE step
+  };
+
   if (state === 'sent') {
     return (
-      <div className="mt-10 space-y-4">
+      <div className="mt-10 space-y-5">
         <p className="numerals text-sm tracking-[0.3em] text-earn">
-          LINK SENT.
+          EMAIL SENT TO {email.trim().toUpperCase()}.
         </p>
         <p className="numerals text-sm leading-relaxed tracking-wide text-bone/70">
-          OPEN THE EMAIL ON THIS PHONE AND TAP THE LINK. YOU LAND BACK HERE,
-          SIGNED IN.
+          IF THE EMAIL SHOWS A 6-DIGIT CODE, TYPE IT HERE — YOU STAY RIGHT
+          HERE. OTHERWISE TAP ITS LINK ON THIS PHONE: IT SIGNS IN WHICHEVER
+          BROWSER IT OPENS IN, SO COME BACK TO THIS ONE.
         </p>
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          placeholder="000000"
+          value={code}
+          maxLength={6}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+          className="numerals w-full border border-bone/40 bg-void px-4 py-4 text-center text-3xl font-bold tracking-[0.5em] text-bone placeholder:text-bone/25 focus:border-earn focus:outline-none"
+        />
+        {codeError && (
+          <p className="numerals text-xs tracking-widest text-fault">
+            {codeError}
+          </p>
+        )}
+        <button
+          onClick={() => void verify()}
+          disabled={code.length !== 6 || verifying}
+          className={
+            'numerals w-full border-2 py-5 text-xl font-bold tracking-[0.3em] ' +
+            (code.length !== 6 || verifying
+              ? 'border-bone/15 text-bone/25'
+              : 'border-earn text-earn active:bg-earn active:text-void')
+          }
+        >
+          {verifying ? 'VERIFYING…' : 'VERIFY'}
+        </button>
+        <button
+          onClick={() => {
+            setState('idle');
+            setCode('');
+            setCodeError('');
+          }}
+          className="numerals w-full py-2 text-xs tracking-widest text-bone/40"
+        >
+          WRONG EMAIL / NO CODE? GO BACK, SEND AGAIN.
+        </button>
       </div>
     );
   }
 
   return (
     <div className="mt-10 space-y-5">
+      {authNotice && (
+        <div className="border border-fault/40 p-4">
+          <p className="numerals text-xs leading-relaxed tracking-widest text-fault">
+            LAST SIGN-IN LINK FAILED: {authNotice}. SEND A FRESH ONE AND TYPE
+            THE CODE INSTEAD.
+          </p>
+        </div>
+      )}
       <p className="numerals text-sm tracking-wide text-bone/70">
-        YOUR EMAIL. A ONE-TAP SIGN-IN LINK GETS SENT TO IT.
+        YOUR EMAIL. A SIGN-IN EMAIL GETS SENT TO IT.
       </p>
       <input
         type="email"
@@ -113,7 +187,7 @@ function EmailStep() {
             : 'border-earn text-earn active:bg-earn active:text-void')
         }
       >
-        {state === 'sending' ? 'SENDING…' : 'SEND LINK'}
+        {state === 'sending' ? 'SENDING…' : 'SEND EMAIL'}
       </button>
     </div>
   );
