@@ -4,14 +4,18 @@ import { angleABC, vis, mapClamp } from './geometry';
 import { LM } from '../pose/landmarks';
 
 /** Plank — side-on camera. THE CLOCK ONLY RUNS WHEN YOU'RE PLANKING.
- *  Valid = shoulder-hip-ankle angle 165°–185° AND visibility > 0.6 on
- *  shoulder/hip/ankle. Timer accumulates only while valid; 500ms grace for
- *  transient jitter, then pause. Paused -> red timer + full-width fault reason
- *  ("HIPS SAGGING" / "HIPS TOO HIGH" / "MOVE INTO FRAME"), resumes green when
- *  fixed. Quality: 100 − scaled mean |deviation from 180°| (0°=100, ≥15°=0). */
+ *  Body line = shoulder-hip-ankle angle; when the ankle isn't visible enough
+ *  (MediaPipe's weakest landmark, especially on toes near the floor) the knee
+ *  stands in — legs are straight in a plank, so the line reads the same.
+ *  Frame presence is judged on shoulder+hip only. Timer accumulates only while
+ *  valid; 500ms grace for transient jitter, then pause. Paused -> red timer +
+ *  full-width fault reason ("HIPS SAGGING" / "HIPS TOO HIGH" / "MOVE INTO
+ *  FRAME"), resumes green when fixed.
+ *  Quality: 100 − scaled mean |deviation from 180°| (0°=100, ≥15°=0). */
 
-const ANGLE_MIN = 165; // below this the body line is broken
-const VIS_FLOOR = 0.6;
+const ANGLE_MIN = 160; // below this the body line is broken (forearm planks pike a little)
+const VIS_FLOOR = 0.5; // shoulder + hip must clear this
+const LOWER_VIS_FLOOR = 0.35; // ankle (or knee fallback) must clear this
 const GRACE_MS = 500; // transient jitter tolerated before the clock pauses
 const DT_CAP_MS = 100; // clamp per-frame dt so a tab-away can't inflate the hold
 const DEV_ZERO = 15; // deviation (deg) at which quality hits 0
@@ -20,6 +24,9 @@ interface Eval {
   valid: boolean;
   fault: string | null;
   dev: number; // |180 - bodyLine| in degrees
+  visSH: number; // min(shoulder, hip) visibility on the chosen side
+  visLower: number; // visibility of the lower point actually used
+  usedKnee: boolean; // true when the knee stood in for the ankle
 }
 
 export class PlankTracker implements ExerciseTracker {
@@ -79,52 +86,69 @@ export class PlankTracker implements ExerciseTracker {
         bodyLine: Math.round(180 - e.dev),
         dev: Math.round(e.dev),
         holdS: Math.round(this.holdMs / 100) / 10,
+        visSH: Math.round(e.visSH * 100) / 100,
+        visLow: Math.round(e.visLower * 100) / 100,
+        knee: e.usedKnee ? 1 : 0,
       },
     };
   }
 
   private evaluate(landmarks: NormalizedLandmark[]): Eval {
-    // pick the more-visible side for the body line
+    // pick the side whose shoulder+hip read best; the lower point is chosen after
     const l = this.sideVisibility(landmarks, 'L');
     const r = this.sideVisibility(landmarks, 'R');
     const side = r > l ? 'R' : 'L';
-    const bestVis = Math.max(l, r);
+    const visSH = Math.max(l, r);
 
-    if (bestVis < VIS_FLOOR) {
-      return { valid: false, fault: 'MOVE INTO FRAME', dev: 90 };
+    if (visSH < VIS_FLOOR) {
+      return { valid: false, fault: 'MOVE INTO FRAME', dev: 90, visSH, visLower: 0, usedKnee: false };
     }
 
-    const [s, h, a] =
+    const [s, h, k, a] =
       side === 'L'
-        ? [LM.LEFT_SHOULDER, LM.LEFT_HIP, LM.LEFT_ANKLE]
-        : [LM.RIGHT_SHOULDER, LM.RIGHT_HIP, LM.RIGHT_ANKLE];
+        ? [LM.LEFT_SHOULDER, LM.LEFT_HIP, LM.LEFT_KNEE, LM.LEFT_ANKLE]
+        : [LM.RIGHT_SHOULDER, LM.RIGHT_HIP, LM.RIGHT_KNEE, LM.RIGHT_ANKLE];
     const shoulder = landmarks[s];
     const hip = landmarks[h];
-    const ankle = landmarks[a];
 
-    const bodyLine = angleABC(shoulder, hip, ankle);
+    // ankle preferred; knee stands in when the ankle reads poorly
+    const ankle = landmarks[a];
+    const knee = landmarks[k];
+    let lower = ankle;
+    let visLower = vis(ankle);
+    let usedKnee = false;
+    if (visLower < LOWER_VIS_FLOOR && vis(knee) > visLower) {
+      lower = knee;
+      visLower = vis(knee);
+      usedKnee = true;
+    }
+    if (visLower < LOWER_VIS_FLOOR) {
+      return { valid: false, fault: 'MOVE INTO FRAME', dev: 90, visSH, visLower, usedKnee };
+    }
+
+    const bodyLine = angleABC(shoulder, hip, lower);
     const dev = Math.abs(180 - bodyLine);
 
     if (bodyLine >= ANGLE_MIN) {
-      return { valid: true, fault: null, dev };
+      return { valid: true, fault: null, dev, visSH, visLower, usedKnee };
     }
 
     // broken line — sag vs pike by where the hip sits relative to the
-    // shoulder-ankle midline. Y grows downward, so a lower hip (bigger Y) sags.
-    const midY = (shoulder.y + ankle.y) / 2;
+    // shoulder-lower midline. Y grows downward, so a lower hip (bigger Y) sags.
+    const midY = (shoulder.y + lower.y) / 2;
     const fault = hip.y > midY ? 'HIPS SAGGING' : 'HIPS TOO HIGH';
-    return { valid: false, fault, dev };
+    return { valid: false, fault, dev, visSH, visLower, usedKnee };
   }
 
   private sideVisibility(
     landmarks: NormalizedLandmark[],
     side: 'L' | 'R'
   ): number {
-    const [s, h, a] =
+    const [s, h] =
       side === 'L'
-        ? [LM.LEFT_SHOULDER, LM.LEFT_HIP, LM.LEFT_ANKLE]
-        : [LM.RIGHT_SHOULDER, LM.RIGHT_HIP, LM.RIGHT_ANKLE];
-    return Math.min(vis(landmarks[s]), vis(landmarks[h]), vis(landmarks[a]));
+        ? [LM.LEFT_SHOULDER, LM.LEFT_HIP]
+        : [LM.RIGHT_SHOULDER, LM.RIGHT_HIP];
+    return Math.min(vis(landmarks[s]), vis(landmarks[h]));
   }
 
   private quality(): number {
