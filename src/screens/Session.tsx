@@ -3,6 +3,7 @@ import { usePoseLandmarker } from '../pose/usePoseLandmarker';
 import { POSE_CONNECTIONS } from '../pose/landmarks';
 import type { TrackerState, ExerciseTracker } from '../trackers/types';
 import { audioSignals } from '../audio/AudioSignals';
+import { getPB, CHASE_TAUNTS, RECORD_DOWN } from '../lib/pb';
 import type { ExerciseConfig } from '../exercises';
 
 export interface SessionResult {
@@ -54,6 +55,31 @@ export function Session({ config, onExit }: Props) {
 
   const { status, error: poseError, detect } = usePoseLandmarker(true);
   const isClock = config.metric === 'clock';
+
+  // ── the ghost: your own record, here to be taken ─────────────────────
+  const pbRef = useRef<number | null>(getPB(config.id));
+  const [recordDown, setRecordDown] = useState(false);
+  const [tauntIdx, setTauntIdx] = useState(() =>
+    Math.floor(Math.random() * CHASE_TAUNTS.length)
+  );
+  const chasing = pbRef.current !== null && !recordDown;
+  useEffect(() => {
+    if (!chasing) return;
+    const t = setInterval(
+      () => setTauntIdx((i) => (i + 1) % CHASE_TAUNTS.length),
+      12000
+    );
+    return () => clearInterval(t);
+  }, [chasing]);
+  useEffect(() => {
+    const pb = pbRef.current;
+    if (pb === null || recordDown) return;
+    const value = isClock ? (live.holdTimeMs ?? 0) : (live.count ?? 0);
+    if (value > pb) {
+      setRecordDown(true);
+      audioSignals.record();
+    }
+  }, [live, isClock, recordDown]);
 
   // ── camera ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -273,6 +299,22 @@ export function Session({ config, onExit }: Props) {
         <div className="numerals mt-2 text-lg tracking-[0.3em] text-bone/70">
           {config.readoutLabel}
         </div>
+        {pbRef.current !== null && (
+          <div
+            className={
+              'numerals mt-3 text-sm tracking-[0.25em] ' +
+              (recordDown ? 'text-earn' : 'text-bone/50')
+            }
+          >
+            {recordDown
+              ? 'RECORD DOWN — KEEP GOING'
+              : `THE RECORD: ${
+                  isClock
+                    ? formatClockTenths(pbRef.current)
+                    : pbRef.current
+                } — TAKE IT`}
+          </div>
+        )}
       </div>
 
       {/* persistent full-width fault banner (out of frame / paused form) */}
@@ -288,6 +330,12 @@ export function Session({ config, onExit }: Props) {
           className="fault-flash numerals absolute inset-x-0 bottom-[22vh] bg-fault py-3 text-center text-2xl font-bold tracking-widest text-void"
         >
           {flash.text}
+        </div>
+      )}
+      {/* the moment the record falls — one green banner, then back to work */}
+      {recordDown && (
+        <div className="record-flash numerals absolute inset-x-0 bottom-[30vh] bg-earn py-4 text-center text-3xl font-bold tracking-widest text-void">
+          {RECORD_DOWN}
         </div>
       )}
 
@@ -320,8 +368,16 @@ export function Session({ config, onExit }: Props) {
         END SESSION
       </button>
 
-      <p className="numerals pointer-events-none absolute inset-x-0 bottom-24 text-center text-[10px] tracking-widest text-bone/30">
-        PROCESSED ON DEVICE. NOTHING WATCHES YOU BUT YOU.
+      <p
+        key={chasing ? tauntIdx : 'privacy'}
+        className={
+          'numerals pointer-events-none absolute inset-x-0 bottom-24 text-center tracking-widest ' +
+          (chasing ? 'screen-in text-xs text-bone/60' : 'text-[10px] text-bone/30')
+        }
+      >
+        {chasing
+          ? CHASE_TAUNTS[tauntIdx]
+          : 'PROCESSED ON DEVICE. NOTHING WATCHES YOU BUT YOU.'}
       </p>
     </div>
   );

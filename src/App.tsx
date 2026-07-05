@@ -7,6 +7,7 @@ import { Ranks } from './screens/Ranks';
 import { Wagers } from './screens/Wagers';
 import { Log } from './screens/Log';
 import { formGrade } from './lib/formGrade';
+import { getPB, submitPB, resultTaunt } from './lib/pb';
 import { EXERCISES, type ExerciseConfig, type ExerciseId } from './exercises';
 import { audioSignals } from './audio/AudioSignals';
 import { supabase, type WagerSubmitResult } from './lib/supabase';
@@ -42,6 +43,9 @@ export function App() {
   const [screen, setScreen] = useState<Screen>('home');
   const [selected, setSelected] = useState<ExerciseConfig | null>(null);
   const [result, setResult] = useState<SessionResult | null>(null);
+  const [pbLine, setPbLine] = useState<{ text: string; beat: boolean } | null>(
+    null
+  );
   const [saveState, setSaveState] = useState<SaveState>('off');
   // when a session was started from a wager's FIGHT button, its id rides along
   const [fightWagerId, setFightWagerId] = useState<string | null>(null);
@@ -120,6 +124,25 @@ export function App() {
         (() => {
           const onExit = (r: SessionResult) => {
             setResult(r);
+            // the comeback loop: did this attempt drop the standing record?
+            if (r.voided) {
+              setPbLine(null);
+            } else {
+              const prev = getPB(r.exerciseId);
+              const beat = submitPB(r.exerciseId, r.metric, r.value, r.voided);
+              const prevLabel =
+                prev === null
+                  ? ''
+                  : r.metric === 'clock'
+                    ? formatClock(prev)
+                    : r.metric === 'rt'
+                      ? `${prev} MS`
+                      : String(prev);
+              setPbLine({
+                text: resultTaunt(beat, prev !== null, prevLabel),
+                beat,
+              });
+            }
             setScreen('result');
             const wagerId = fightWagerId;
             setFightWagerId(null); // one attempt per FIGHT tap, win or void
@@ -199,6 +222,7 @@ export function App() {
       {screen === 'result' && result && (
         <ResultScreen
           result={result}
+          pbLine={pbLine}
           saveState={saveState}
           wagerNote={wagerNote}
           handle={profile?.handle ?? null}
@@ -401,6 +425,21 @@ function PreSession({
 }
 
 // ── RESULT ─────────────────────────────────────────────────────────────
+/** the verdict against yesterday's you — green when the record fell */
+function PBLine({ pbLine }: { pbLine: { text: string; beat: boolean } | null }) {
+  if (!pbLine) return null;
+  return (
+    <p
+      className={
+        'numerals mt-8 max-w-xs text-center text-sm font-bold leading-relaxed tracking-[0.2em] ' +
+        (pbLine.beat ? 'text-earn' : 'text-fault')
+      }
+    >
+      {pbLine.text}
+    </p>
+  );
+}
+
 function SaveLine({
   saveState,
   wagerNote,
@@ -489,12 +528,14 @@ function ResultActions({
 
 function ResultScreen({
   result,
+  pbLine,
   saveState,
   wagerNote,
   handle,
   onDone,
 }: {
   result: SessionResult;
+  pbLine: { text: string; beat: boolean } | null;
   saveState: SaveState;
   wagerNote: string | null;
   handle: string | null;
@@ -551,6 +592,7 @@ function ResultScreen({
           <Stat label="FALSE STARTS" value={String(result.falseStarts ?? 0)} />
           <Stat label="SCORE" value={String(result.avgForm)} />
         </div>
+        <PBLine pbLine={pbLine} />
         <ResultActions
           result={result}
           handle={handle}
@@ -591,6 +633,8 @@ function ResultScreen({
       ) : (
         <FormVerdict score={result.avgForm} />
       )}
+
+      <PBLine pbLine={pbLine} />
 
       <ResultActions
         result={result}

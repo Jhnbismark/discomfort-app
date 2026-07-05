@@ -88,3 +88,8 @@
 .fault-flash {
   animation: fault-flash 0.8s ease-out forwards;
 }
+
+/* the record falls — a slower, prouder green flash */
+.record-flash {
+  animation: fault-flash 2s ease-out forwards;
+}

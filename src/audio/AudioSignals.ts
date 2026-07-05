@@ -10,6 +10,7 @@ export class AudioSignals {
   private ctx: AudioContext | null = null;
   private pausedOsc: OscillatorNode | null = null;
   private pausedGain: GainNode | null = null;
+  private pausedLfo: OscillatorNode | null = null;
 
   /** Call from a click/tap. Creates (or resumes) the AudioContext. */
   async unlock(): Promise<void> {
@@ -97,32 +98,67 @@ export class AudioSignals {
     osc.stop(t + 0.45);
   }
 
-  /** Begin a sustained tone (hold-clock paused). Idempotent. */
+  /** Begin the paused signal (hold-clock paused). Idempotent.
+   *  A slow PULSE, not a flat drone — a 2Hz tremolo on a low sine reads as
+   *  "warning, fix it" without drilling into the ears when a pause runs long. */
   startPausedTone(): void {
     if (!this.ctx || this.pausedOsc) return;
     const t = this.now();
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(220, t);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(196, t);
+    // carrier level ramps in low…
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.22, t + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.1, t + 0.15);
+    // …and a 2Hz LFO swings it between near-silent and ~0.2
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(2, t);
+    lfoGain.gain.setValueAtTime(0.09, t);
+    lfo.connect(lfoGain).connect(gain.gain);
+    lfo.start(t);
     osc.connect(gain).connect(this.ctx.destination);
     osc.start(t);
     this.pausedOsc = osc;
     this.pausedGain = gain;
+    this.pausedLfo = lfo;
   }
 
-  /** Stop the sustained paused tone. Idempotent. */
+  /** Stop the paused signal. Idempotent. */
   stopPausedTone(): void {
     if (!this.ctx || !this.pausedOsc || !this.pausedGain) return;
     const t = this.now();
     this.pausedGain.gain.cancelScheduledValues(t);
-    this.pausedGain.gain.setValueAtTime(this.pausedGain.gain.value, t);
+    this.pausedGain.gain.setValueAtTime(Math.max(this.pausedGain.gain.value, 0.0001), t);
     this.pausedGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
     this.pausedOsc.stop(t + 0.1);
+    this.pausedLfo?.stop(t + 0.1);
     this.pausedOsc = null;
     this.pausedGain = null;
+    this.pausedLfo = null;
+  }
+
+  /** Personal record falls mid-session — a rising major triad, unmistakably
+   *  different from the rep tick. */
+  record(): void {
+    if (!this.ctx) return;
+    const t = this.now();
+    const notes = [523.25, 659.25, 783.99]; // C5 E5 G5
+    notes.forEach((f, i) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      const at = t + i * 0.09;
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, at);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.4, at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.5);
+      osc.connect(gain).connect(this.ctx!.destination);
+      osc.start(at);
+      osc.stop(at + 0.55);
+    });
   }
 
   /** Release everything (call on session end). */
