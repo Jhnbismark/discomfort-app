@@ -253,7 +253,7 @@ function Home({
 
       <Section label="BODY">
         <TestButton label="PUSH-UPS" onClick={() => onPick('pushup')} />
-        <TestButton label="SKIPPING" onClick={() => onPick('skipping')} />
+        <TestButton label="SQUATS" onClick={() => onPick('squat')} />
         <TestButton label="PLANK" onClick={() => onPick('plank')} />
       </Section>
 

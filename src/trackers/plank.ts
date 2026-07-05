@@ -13,10 +13,10 @@ import { LM } from '../pose/landmarks';
  *  FRAME"), resumes green when fixed.
  *  Quality: 100 − scaled mean |deviation from 180°| (0°=100, ≥15°=0). */
 
-const ANGLE_MIN = 160; // below this the body line is broken (forearm planks pike a little)
+const ANGLE_MIN = 163; // below this the body line is broken (small allowance for forearm-plank pike)
 const VIS_FLOOR = 0.5; // shoulder + hip must clear this
 const LOWER_VIS_FLOOR = 0.35; // ankle (or knee fallback) must clear this
-const GRACE_MS = 500; // transient jitter tolerated before the clock pauses
+const GRACE_MS = 400; // transient jitter tolerated before the clock pauses
 const DT_CAP_MS = 100; // clamp per-frame dt so a tab-away can't inflate the hold
 const DEV_ZERO = 15; // deviation (deg) at which quality hits 0
 

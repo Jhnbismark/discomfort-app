@@ -11,7 +11,7 @@ import { formatClock } from './Session';
 
 const TESTS: ExerciseId[] = [
   'pushup',
-  'skipping',
+  'squat',
   'plank',
   'stillness',
   'gaze',

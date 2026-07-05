@@ -19,6 +19,7 @@ export function PlacementDiagram({ kind }: { kind: Diagram }) {
         strokeLinecap="square"
       >
         {kind === 'side' && <SideOn />}
+        {kind === 'sideStand' && <SideStand />}
         {kind === 'front' && <FrontOn />}
         {kind === 'near' && <NearUpper />}
         {kind === 'face' && <NearFace />}
@@ -27,27 +28,60 @@ export function PlacementDiagram({ kind }: { kind: Diagram }) {
   );
 }
 
-/** phone on the floor, side-on view of a horizontal body 2–3m away */
+/** phone SIDEWAYS (landscape) on the floor, side-on view of a horizontal body */
 function SideOn() {
   return (
     <>
       {/* ground */}
       <line x1="8" y1="72" x2="192" y2="72" stroke={DIM} />
-      {/* phone standing on the floor */}
-      <rect x="14" y="52" width="8" height="20" stroke={EARN} />
+      {/* phone lying landscape, propped on the floor — wider than tall */}
+      <rect x="10" y="58" width="26" height="14" stroke={EARN} />
+      <line x1="14" y1="62" x2="14" y2="68" stroke={EARN} strokeDasharray="1 2" />
       {/* view cone */}
-      <line x1="22" y1="54" x2="86" y2="30" stroke={EARN} strokeDasharray="4 4" />
-      <line x1="22" y1="70" x2="86" y2="70" stroke={EARN} strokeDasharray="4 4" />
+      <line x1="36" y1="58" x2="92" y2="34" stroke={EARN} strokeDasharray="4 4" />
+      <line x1="36" y1="70" x2="92" y2="70" stroke={EARN} strokeDasharray="4 4" />
       {/* horizontal body: head, straight line shoulder->ankle, arms down */}
       <circle cx="102" cy="52" r="6" />
       <line x1="108" y1="56" x2="178" y2="64" />
       <line x1="116" y1="57" x2="116" y2="72" />
       <line x1="170" y1="63" x2="178" y2="72" />
-      {/* distance note */}
+      {/* notes */}
       <text x="52" y="14" fill={DIM} stroke="none" fontSize="9" fontFamily="monospace">
         2–3 M
       </text>
       <line x1="26" y1="18" x2="94" y2="18" stroke={DIM} strokeDasharray="2 3" />
+      <text x="8" y="50" fill={DIM} stroke="none" fontSize="8" fontFamily="monospace">
+        LANDSCAPE
+      </text>
+    </>
+  );
+}
+
+/** phone SIDEWAYS (landscape) propped up, standing body side-on 2–3m away */
+function SideStand() {
+  return (
+    <>
+      {/* ground */}
+      <line x1="8" y1="72" x2="192" y2="72" stroke={DIM} />
+      {/* phone landscape, propped up */}
+      <rect x="10" y="58" width="26" height="14" stroke={EARN} />
+      <line x1="14" y1="62" x2="14" y2="68" stroke={EARN} strokeDasharray="1 2" />
+      {/* view cone up to full standing height */}
+      <line x1="36" y1="58" x2="126" y2="10" stroke={EARN} strokeDasharray="4 4" />
+      <line x1="36" y1="70" x2="126" y2="70" stroke={EARN} strokeDasharray="4 4" />
+      {/* standing figure, side-on: head, torso, one arm forward, bent knees hint */}
+      <circle cx="146" cy="18" r="7" />
+      <line x1="146" y1="25" x2="146" y2="46" />
+      <line x1="146" y1="32" x2="160" y2="36" />
+      <line x1="146" y1="46" x2="152" y2="58" />
+      <line x1="152" y1="58" x2="148" y2="72" />
+      {/* notes */}
+      <text x="56" y="14" fill={DIM} stroke="none" fontSize="9" fontFamily="monospace">
+        2–3 M
+      </text>
+      <text x="8" y="50" fill={DIM} stroke="none" fontSize="8" fontFamily="monospace">
+        LANDSCAPE
+      </text>
     </>
   );
 }

@@ -9,7 +9,7 @@ import { formatClock } from './Session';
 
 const ORDER: ExerciseId[] = [
   'pushup',
-  'skipping',
+  'squat',
   'plank',
   'stillness',
   'gaze',
