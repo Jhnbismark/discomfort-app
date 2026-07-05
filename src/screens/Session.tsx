@@ -63,7 +63,7 @@ export function Session({ config, onExit }: Props) {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: { ideal: 'environment' },
+            facingMode: { ideal: 'user' },
             width: { ideal: 1280 },
             height: { ideal: 720 },
           },
@@ -121,11 +121,16 @@ export function Session({ config, onExit }: Props) {
       const dh = vh * scale;
       const ox = (cw - dw) / 2;
       const oy = (ch - dh) / 2;
-      const px = (nx: number) => ox + nx * dw;
+      // front camera: mirror feed + skeleton so it reads like a mirror
+      const px = (nx: number) => ox + (1 - nx) * dw;
       const py = (ny: number) => oy + ny * dh;
 
       ctx.clearRect(0, 0, cw, ch);
+      ctx.save();
+      ctx.translate(cw, 0);
+      ctx.scale(-1, 1);
       ctx.drawImage(video, ox, oy, dw, dh);
+      ctx.restore();
       ctx.fillStyle = 'rgba(10,10,10,0.45)';
       ctx.fillRect(0, 0, cw, ch);
 
