@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { usePoseLandmarker } from '../pose/usePoseLandmarker';
-import { POSE_CONNECTIONS } from '../pose/landmarks';
+import { createLandmarkStore } from '../tracking/landmarkStore';
+import { LandmarkFilterBank } from '../tracking/oneEuro';
+import { startRenderLoop } from '../tracking/renderLoop';
 import type { TrackerState, ExerciseTracker } from '../trackers/types';
 import { audioSignals } from '../audio/AudioSignals';
 import { getPB, CHASE_TAUNTS, RECORD_DOWN } from '../lib/pb';
@@ -28,17 +30,21 @@ interface Props {
 
 const EARN = '#9BE564';
 const FAULT = '#E5484D';
-const BONE = '#EDEDEA';
 
 export function Session({ config, onExit }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const trackerRef = useRef<ExerciseTracker>(config.makeTracker!());
-  const rafRef = useRef<number>(0);
+  // detection -> rendering handoff: filtered landmarks land in the store,
+  // the render loop interpolates + draws them at display rate
+  const storeRef = useRef(createLandmarkStore());
+  const filterRef = useRef(new LandmarkFilterBank());
+  const phaseRef = useRef('idle');
   const lastTsRef = useRef(0);
   // last known-good tracker output — the loop closure must not read `live`
   const lastGoodRef = useRef({ count: 0, holdTimeMs: 0, formScore: 0 });
   const fpsRef = useRef({ frames: 0, windowStart: 0, fps: 0 });
+  const renderFpsRef = useRef(0);
   // for clock exercises: whether the sustained paused-tone is currently on
   const paused = useRef(false);
 
@@ -114,51 +120,25 @@ export function Session({ config, onExit }: Props) {
     };
   }, []);
 
-  // ── main loop ──────────────────────────────────────────────────────────
+  // ── detection loop — runs at CAMERA rate, never draws ─────────────────
+  // One Euro filters the raw landmarks, the filtered set goes to the store
+  // (for the render loop) AND to the tracker (freshest signal — display
+  // interpolation is cosmetic only and must not delay rep detection).
   useEffect(() => {
     if (status !== 'ready') return;
     const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    if (!video) return;
+    let stopped = false;
+    let rafId = 0;
+    let vfcId = 0;
+    let lastVideoTime = -1;
 
-    const loop = () => {
-      rafRef.current = requestAnimationFrame(loop);
+    const runDetection = () => {
       if (video.readyState < 2 || video.videoWidth === 0) return;
 
       let ts = performance.now();
       if (ts <= lastTsRef.current) ts = lastTsRef.current + 1;
       lastTsRef.current = ts;
-
-      const lms = detect(video, ts);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      const cw = canvas.clientWidth;
-      const ch = canvas.clientHeight;
-      if (canvas.width !== cw || canvas.height !== ch) {
-        canvas.width = cw;
-        canvas.height = ch;
-      }
-
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      const scale = Math.max(cw / vw, ch / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
-      const ox = (cw - dw) / 2;
-      const oy = (ch - dh) / 2;
-      // front camera: mirror feed + skeleton so it reads like a mirror
-      const px = (nx: number) => ox + (1 - nx) * dw;
-      const py = (ny: number) => oy + ny * dh;
-
-      ctx.clearRect(0, 0, cw, ch);
-      ctx.save();
-      ctx.translate(cw, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, ox, oy, dw, dh);
-      ctx.restore();
-      ctx.fillStyle = 'rgba(10,10,10,0.45)';
-      ctx.fillRect(0, 0, cw, ch);
 
       const f = fpsRef.current;
       f.frames += 1;
@@ -168,25 +148,28 @@ export function Session({ config, onExit }: Props) {
         f.windowStart = ts;
       }
 
+      const raw = detect(video, ts);
+
       let state: TrackerState;
-      if (lms && lms.length) {
-        state = trackerRef.current.processFrame(lms, ts);
+      if (raw && raw.length) {
+        const filtered = filterRef.current.apply(raw, ts);
+        storeRef.current.setTarget(filtered, ts);
+        state = trackerRef.current.processFrame(filtered, ts);
         lastGoodRef.current = {
           count: state.count ?? 0,
           holdTimeMs: state.holdTimeMs ?? 0,
           formScore: state.formScore,
         };
-        drawSkeleton(ctx, lms, px, py, state.phase);
       } else {
-        // body left frame: keep earned numbers, flag the state. For a clock,
-        // the tracker itself already stopped accumulating; showing 'invalid'
-        // drives the paused tone below.
+        // body left frame: keep earned numbers, flag the state. The store's
+        // lastUpdateTs goes stale, so the render loop fades the skeleton.
         state = {
           ...lastGoodRef.current,
           phase: 'invalid',
           faults: ['MOVE INTO FRAME'],
         };
       }
+      phaseRef.current = state.phase;
 
       // one-frame events -> audio + flash (count exercises)
       if (state.events) {
@@ -215,9 +198,53 @@ export function Session({ config, onExit }: Props) {
       setLive(state);
     };
 
-    rafRef.current = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafRef.current);
+    // follow camera frames via requestVideoFrameCallback where available;
+    // fall back to a RAF loop gated on currentTime so we still only detect
+    // on NEW frames, not once per display refresh
+    const vfc = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+    if (vfc.requestVideoFrameCallback) {
+      const onFrame = () => {
+        if (stopped) return;
+        vfcId = vfc.requestVideoFrameCallback!(onFrame);
+        runDetection();
+      };
+      vfcId = vfc.requestVideoFrameCallback(onFrame);
+    } else {
+      const rafLoop = () => {
+        if (stopped) return;
+        rafId = requestAnimationFrame(rafLoop);
+        if (video.currentTime === lastVideoTime) return;
+        lastVideoTime = video.currentTime;
+        runDetection();
+      };
+      rafId = requestAnimationFrame(rafLoop);
+    }
+
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(rafId);
+      vfc.cancelVideoFrameCallback?.(vfcId);
+    };
   }, [status, detect, isClock]);
+
+  // ── render loop — display-rate RAF, draws interpolated landmarks ──────
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    return startRenderLoop({
+      video,
+      canvas,
+      store: storeRef.current,
+      getPhase: () => phaseRef.current,
+      onFps: (fps) => {
+        renderFpsRef.current = fps;
+      },
+    });
+  }, []);
 
   // silence any sustained tone on unmount (context is app-wide, keep it)
   useEffect(() => {
@@ -350,7 +377,10 @@ export function Session({ config, onExit }: Props) {
               </div>
             ))}
           <div>FORM: {live.formScore}</div>
-          <div>FPS: {fpsRef.current.fps || '—'}</div>
+          <div>
+            FPS: {fpsRef.current.fps || '—'} DETECT /{' '}
+            {renderFpsRef.current || '—'} DRAW
+          </div>
         </div>
       )}
 
@@ -417,42 +447,4 @@ function Overlay({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
-}
-
-type Proj = (n: number) => number;
-
-function drawSkeleton(
-  ctx: CanvasRenderingContext2D,
-  lms: { x: number; y: number; visibility?: number }[],
-  px: Proj,
-  py: Proj,
-  phase: string
-) {
-  const earnPhases = ['down', 'holding', 'airborne'];
-  const faultPhases = ['invalid', 'paused'];
-  const color = faultPhases.includes(phase)
-    ? FAULT
-    : earnPhases.includes(phase)
-      ? EARN
-      : BONE;
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-
-  for (const [a, b] of POSE_CONNECTIONS) {
-    const p = lms[a];
-    const q = lms[b];
-    if (!p || !q) continue;
-    if ((p.visibility ?? 0) < 0.4 || (q.visibility ?? 0) < 0.4) continue;
-    ctx.beginPath();
-    ctx.moveTo(px(p.x), py(p.y));
-    ctx.lineTo(px(q.x), py(q.y));
-    ctx.stroke();
-  }
-  for (const lm of lms) {
-    if ((lm.visibility ?? 0) < 0.4) continue;
-    ctx.beginPath();
-    ctx.arc(px(lm.x), py(lm.y), 5, 0, Math.PI * 2);
-    ctx.fill();
-  }
 }

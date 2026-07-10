@@ -5,12 +5,15 @@ import { LM } from '../pose/landmarks';
 
 /** Squats — side-on camera, standing.
  *  Knee angle = angle(hip, knee, ankle), side with higher visibility.
- *  UP (>165°) -> DOWN -> UP = 1 rep, counted at return to UP.
- *  HARD RULE: a rep that doesn't break below 105° at the knee (thigh near
+ *  UP (>162°) -> DOWN -> UP = 1 rep, counted at return to UP.
+ *  HARD RULE: a rep that doesn't break below 107° at the knee (thigh near
  *  parallel) is NOT counted at all — fault flash "SHALLOW — NOT COUNTED". */
 
-const UP_ANGLE = 165; // standing tall
-const VALID_DEPTH = 105; // must break below this to count
+// Landmarks arrive One-Euro filtered (tracking/oneEuro.ts), which damps peak
+// angles at rep extremes by ~1-2° worst case; UP_ANGLE/VALID_DEPTH carry that
+// margin so filtered counts match unfiltered ones.
+const UP_ANGLE = 162; // standing tall
+const VALID_DEPTH = 107; // must break below this to count
 const ATTEMPT_ENTER = 140; // below this = user is descending into an attempt
 const VIS_FLOOR = 0.5; // per-joint visibility floor -> else "MOVE INTO FRAME"
 

@@ -5,12 +5,15 @@ import { LM } from '../pose/landmarks';
 
 /** Push-ups — side-on camera.
  *  Elbow angle = angle(shoulder, elbow, wrist), side with higher visibility.
- *  UP (>160°) -> DOWN (<90°) -> UP = 1 rep, counted at return to UP. 5° hyst.
- *  HARD RULE: a rep that doesn't reach <100° is NOT counted at all (not a
+ *  UP (>157°) -> DOWN -> UP = 1 rep, counted at return to UP.
+ *  HARD RULE: a rep that doesn't reach <102° is NOT counted at all (not a
  *  reduced score) — fault flash "SHALLOW — NOT COUNTED". */
 
-const UP_ANGLE = 160; // top of a rep
-const VALID_DEPTH = 100; // must break below this to count
+// Landmarks arrive One-Euro filtered (tracking/oneEuro.ts), which damps peak
+// angles at rep extremes by ~1-2° worst case; UP_ANGLE/VALID_DEPTH carry that
+// margin so filtered counts match unfiltered ones.
+const UP_ANGLE = 157; // top of a rep
+const VALID_DEPTH = 102; // must break below this to count
 const ATTEMPT_ENTER = 130; // below this = user is descending into an attempt
 const VIS_FLOOR = 0.6; // per-joint visibility floor -> else "MOVE INTO FRAME"
 
@@ -155,7 +158,7 @@ export class PushupTracker implements ExerciseTracker {
    *  (180° ideal), symmetry 15% (L/R elbow delta when both visible),
    *  tempo 15% (1–4s full marks). */
   private repScore(b: BottomSample, durationMs: number): number {
-    const depth = mapClamp(b.minElbow, 100, 90, 0, 100);
+    const depth = mapClamp(b.minElbow, VALID_DEPTH, 90, 0, 100);
 
     const lineDev = Math.abs(180 - b.bodyLine);
     const line = mapClamp(lineDev, 0, 40, 100, 0);
