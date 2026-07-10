@@ -3,12 +3,14 @@ import type { PoseLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision
 
 /** Lazy-load the MediaPipe Pose model on session start. All pose processing is
  *  client-side — frames never leave the device; only numeric results are used.
- *  Falls back to the 'lite' model for usable fps on phones. */
+ *  'full' model: 'lite' misplaced limbs at body-across-the-room distance, and
+ *  since rendering is decoupled from detection (tracking/renderLoop.ts) the
+ *  overlay stays smooth even when detection fps drops. */
 
 const WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
-const MODEL_LITE =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+const MODEL_FULL =
+  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
 
 export type PoseStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -30,7 +32,7 @@ export function usePoseLandmarker(active: boolean) {
         const vision = await mp.FilesetResolver.forVisionTasks(WASM_BASE);
         if (cancelled) return;
         const landmarker = await mp.PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_LITE, delegate: 'GPU' },
+          baseOptions: { modelAssetPath: MODEL_FULL, delegate: 'GPU' },
           runningMode: 'VIDEO',
           numPoses: 1,
         });
