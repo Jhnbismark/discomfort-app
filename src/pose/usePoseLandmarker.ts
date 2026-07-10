@@ -9,15 +9,25 @@ import type { PoseLandmarker, NormalizedLandmark } from '@mediapipe/tasks-vision
 
 const WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm';
-const MODEL_FULL =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+const MODEL_URLS = {
+  full: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
+  // ~29MB, slowest, best accuracy — viable since rendering no longer waits
+  // on detection; promoted to default if it wins the phone test
+  heavy:
+    'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task',
+} as const;
 
 export type PoseStatus = 'idle' | 'loading' | 'ready' | 'error';
 export type PoseDelegate = 'GPU' | 'CPU';
+export type PoseModel = keyof typeof MODEL_URLS;
 
 /** delegate: some phone GPUs run MediaPipe's GPU path with garbage output —
  *  the CPU toggle in the session debug panel is the diagnostic for that. */
-export function usePoseLandmarker(active: boolean, delegate: PoseDelegate = 'GPU') {
+export function usePoseLandmarker(
+  active: boolean,
+  delegate: PoseDelegate = 'GPU',
+  model: PoseModel = 'full'
+) {
   const [status, setStatus] = useState<PoseStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
@@ -35,7 +45,7 @@ export function usePoseLandmarker(active: boolean, delegate: PoseDelegate = 'GPU
         const vision = await mp.FilesetResolver.forVisionTasks(WASM_BASE);
         if (cancelled) return;
         const landmarker = await mp.PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_FULL, delegate },
+          baseOptions: { modelAssetPath: MODEL_URLS[model], delegate },
           runningMode: 'VIDEO',
           numPoses: 1,
         });
@@ -58,7 +68,7 @@ export function usePoseLandmarker(active: boolean, delegate: PoseDelegate = 'GPU
       landmarkerRef.current = null;
       setStatus('idle');
     };
-  }, [active, delegate]);
+  }, [active, delegate, model]);
 
   /** Run detection and return the first pose's landmarks (or null). Stable
    *  identity (reads through a ref) so consumers can list it in effect deps

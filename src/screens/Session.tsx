@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { usePoseLandmarker, type PoseDelegate } from '../pose/usePoseLandmarker';
+import {
+  usePoseLandmarker,
+  type PoseDelegate,
+  type PoseModel,
+} from '../pose/usePoseLandmarker';
 import { createLandmarkStore } from '../tracking/landmarkStore';
 import { LandmarkFilterBank } from '../tracking/oneEuro';
 import { startRenderLoop } from '../tracking/renderLoop';
@@ -54,6 +58,7 @@ export function Session({ config, onExit }: Props) {
   debugRef.current = debug;
   // diagnostic for phones whose GPU delegate produces garbage landmarks
   const [delegate, setDelegate] = useState<PoseDelegate>('GPU');
+  const [model, setModel] = useState<PoseModel>('full');
   const [live, setLive] = useState<TrackerState>({
     count: 0,
     holdTimeMs: 0,
@@ -63,7 +68,11 @@ export function Session({ config, onExit }: Props) {
   });
   const [flash, setFlash] = useState<{ text: string; key: number } | null>(null);
 
-  const { status, error: poseError, detect } = usePoseLandmarker(true, delegate);
+  const {
+    status,
+    error: poseError,
+    detect,
+  } = usePoseLandmarker(true, delegate, model);
   const isClock = config.metric === 'clock';
 
   // ── the ghost: your own record, here to be taken ─────────────────────
@@ -392,6 +401,12 @@ export function Session({ config, onExit }: Props) {
             className="mt-1 border border-earn/60 px-2 py-1 tracking-widest"
           >
             DELEGATE: {delegate} — TAP TO SWITCH
+          </button>
+          <button
+            onClick={() => setModel((m) => (m === 'full' ? 'heavy' : 'full'))}
+            className="mt-1 block border border-earn/60 px-2 py-1 tracking-widest"
+          >
+            MODEL: {model.toUpperCase()} — TAP TO SWITCH
           </button>
         </div>
       )}
