@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { usePoseLandmarker } from '../pose/usePoseLandmarker';
+import { usePoseLandmarker, type PoseDelegate } from '../pose/usePoseLandmarker';
 import { createLandmarkStore } from '../tracking/landmarkStore';
 import { LandmarkFilterBank } from '../tracking/oneEuro';
 import { startRenderLoop } from '../tracking/renderLoop';
@@ -50,6 +50,10 @@ export function Session({ config, onExit }: Props) {
 
   const [camError, setCamError] = useState<string | null>(null);
   const [debug, setDebug] = useState(false);
+  const debugRef = useRef(false);
+  debugRef.current = debug;
+  // diagnostic for phones whose GPU delegate produces garbage landmarks
+  const [delegate, setDelegate] = useState<PoseDelegate>('GPU');
   const [live, setLive] = useState<TrackerState>({
     count: 0,
     holdTimeMs: 0,
@@ -59,7 +63,7 @@ export function Session({ config, onExit }: Props) {
   });
   const [flash, setFlash] = useState<{ text: string; key: number } | null>(null);
 
-  const { status, error: poseError, detect } = usePoseLandmarker(true);
+  const { status, error: poseError, detect } = usePoseLandmarker(true, delegate);
   const isClock = config.metric === 'clock';
 
   // ── the ghost: your own record, here to be taken ─────────────────────
@@ -153,7 +157,7 @@ export function Session({ config, onExit }: Props) {
       let state: TrackerState;
       if (raw && raw.length) {
         const filtered = filterRef.current.apply(raw, ts);
-        storeRef.current.setTarget(filtered, ts);
+        storeRef.current.setTarget(filtered, raw, ts);
         state = trackerRef.current.processFrame(filtered, ts);
         lastGoodRef.current = {
           count: state.count ?? 0,
@@ -240,6 +244,7 @@ export function Session({ config, onExit }: Props) {
       canvas,
       store: storeRef.current,
       getPhase: () => phaseRef.current,
+      getShowRaw: () => debugRef.current,
       onFps: (fps) => {
         renderFpsRef.current = fps;
       },
@@ -381,6 +386,13 @@ export function Session({ config, onExit }: Props) {
             FPS: {fpsRef.current.fps || '—'} DETECT /{' '}
             {renderFpsRef.current || '—'} DRAW
           </div>
+          <div className="text-[#FFD500]">YELLOW = RAW MODEL OUTPUT</div>
+          <button
+            onClick={() => setDelegate((d) => (d === 'GPU' ? 'CPU' : 'GPU'))}
+            className="mt-1 border border-earn/60 px-2 py-1 tracking-widest"
+          >
+            DELEGATE: {delegate} — TAP TO SWITCH
+          </button>
         </div>
       )}
 

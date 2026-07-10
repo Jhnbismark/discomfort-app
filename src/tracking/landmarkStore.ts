@@ -23,17 +23,26 @@ export interface DisplayLandmark {
 export interface LandmarkStore {
   target: NormalizedLandmark[] | null;
   display: DisplayLandmark[] | null;
+  /** unfiltered model output — drawn only in debug mode, to separate "the
+   *  model is wrong" from "the filter/interpolation pipeline is wrong" */
+  raw: NormalizedLandmark[] | null;
   lastUpdateTs: number;
-  setTarget(landmarks: NormalizedLandmark[], tsMs: number): void;
+  setTarget(
+    landmarks: NormalizedLandmark[],
+    raw: NormalizedLandmark[],
+    tsMs: number
+  ): void;
 }
 
 export function createLandmarkStore(): LandmarkStore {
   return {
     target: null,
     display: null,
+    raw: null,
     lastUpdateTs: 0,
-    setTarget(landmarks, tsMs) {
+    setTarget(landmarks, raw, tsMs) {
       this.target = landmarks;
+      this.raw = raw;
       this.lastUpdateTs = tsMs;
     },
   };

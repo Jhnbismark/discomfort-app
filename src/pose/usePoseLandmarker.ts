@@ -13,8 +13,11 @@ const MODEL_FULL =
   'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
 
 export type PoseStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type PoseDelegate = 'GPU' | 'CPU';
 
-export function usePoseLandmarker(active: boolean) {
+/** delegate: some phone GPUs run MediaPipe's GPU path with garbage output —
+ *  the CPU toggle in the session debug panel is the diagnostic for that. */
+export function usePoseLandmarker(active: boolean, delegate: PoseDelegate = 'GPU') {
   const [status, setStatus] = useState<PoseStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const landmarkerRef = useRef<PoseLandmarker | null>(null);
@@ -32,7 +35,7 @@ export function usePoseLandmarker(active: boolean) {
         const vision = await mp.FilesetResolver.forVisionTasks(WASM_BASE);
         if (cancelled) return;
         const landmarker = await mp.PoseLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_FULL, delegate: 'GPU' },
+          baseOptions: { modelAssetPath: MODEL_FULL, delegate },
           runningMode: 'VIDEO',
           numPoses: 1,
         });
@@ -55,7 +58,7 @@ export function usePoseLandmarker(active: boolean) {
       landmarkerRef.current = null;
       setStatus('idle');
     };
-  }, [active]);
+  }, [active, delegate]);
 
   /** Run detection and return the first pose's landmarks (or null). Stable
    *  identity (reads through a ref) so consumers can list it in effect deps

@@ -29,6 +29,8 @@ export interface RenderLoopOptions {
   store: LandmarkStore;
   /** latest tracker phase — drives skeleton color (earn/fault/bone) */
   getPhase: () => string;
+  /** when true, also draw the RAW model output as a thin yellow skeleton */
+  getShowRaw?: () => boolean;
   /** called ~once per second with the measured render fps */
   onFps?: (fps: number) => void;
 }
@@ -36,7 +38,7 @@ export interface RenderLoopOptions {
 /** Starts the loop immediately (frames are skipped until the camera has
  *  data). Returns a stop function — call it on unmount. */
 export function startRenderLoop(opts: RenderLoopOptions): () => void {
-  const { video, canvas, store, getPhase, onFps } = opts;
+  const { video, canvas, store, getPhase, getShowRaw, onFps } = opts;
   let rafId = 0;
   let stopped = false;
   let lastFrameTs = 0;
@@ -103,6 +105,13 @@ export function startRenderLoop(opts: RenderLoopOptions): () => void {
 
     ctx.globalAlpha = alpha;
     drawSkeleton(ctx, lms, px, py, getPhase());
+
+    // debug: raw model output on top — if THIS skeleton is wrong, the model
+    // (or its GPU delegate) is wrong; if it's right but the main one is off,
+    // the filter/interpolation pipeline is the problem
+    if (getShowRaw?.() && store.raw) {
+      drawRawSkeleton(ctx, store.raw, px, py);
+    }
     ctx.globalAlpha = 1;
   };
 
@@ -181,4 +190,25 @@ function drawSkeleton(
     ctx.arc(x, y, 5, 0, Math.PI * 2);
   }
   ctx.fill();
+}
+
+function drawRawSkeleton(
+  ctx: CanvasRenderingContext2D,
+  lms: { x: number; y: number; visibility?: number }[],
+  px: Proj,
+  py: Proj
+): void {
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#FFD500';
+  ctx.beginPath();
+  for (const [a, b] of POSE_CONNECTIONS) {
+    const p = lms[a];
+    const q = lms[b];
+    if (!p || !q) continue;
+    if ((p.visibility ?? 0) < VIS_DRAW_FLOOR || (q.visibility ?? 0) < VIS_DRAW_FLOOR)
+      continue;
+    ctx.moveTo(px(p.x), py(p.y));
+    ctx.lineTo(px(q.x), py(q.y));
+  }
+  ctx.stroke();
 }
